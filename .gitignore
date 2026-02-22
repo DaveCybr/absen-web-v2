@@ -1,3 +1,6 @@
 node_modules
 .next
 dist
+web-admin/.env.local
+web-admin/.next
+web-admin/dist
