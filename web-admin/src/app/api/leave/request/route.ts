@@ -1,19 +1,46 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { getTodayWIB } from "@/lib/attendance";
+import {
+  sendToMultipleDevices,
+  buildNewLeaveRequestNotification,
+} from "@/lib/fcm";
+import { cleanupInvalidTokens } from "@/lib/fcm-cleanup";
+import { formatDate } from "@/lib/utils";
 
 // GET - List leave requests
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
-    const { searchParams } = new URL(request.url);
 
-    const employeeId = searchParams.get("employee_id");
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Ambil employee yang login untuk filter berdasarkan role
+    const { data: currentEmployee } = await supabase
+      .from("employees")
+      .select("id, role")
+      .eq("user_id", user.id)
+      .single();
+
+    if (!currentEmployee) {
+      return NextResponse.json(
+        { error: "Employee not found" },
+        { status: 404 },
+      );
+    }
+
+    const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "50");
     const offset = (page - 1) * limit;
 
-    // ✅ FIX: Gunakan FK hint eksplisit
     let query = supabase
       .from("leave_requests")
       .select(
@@ -28,8 +55,16 @@ export async function GET(request: NextRequest) {
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (employeeId) {
-      query = query.eq("employee_id", employeeId);
+    // ✅ FIX [C3]: Employee hanya bisa lihat request miliknya sendiri
+    // Admin bisa lihat semua
+    if (currentEmployee.role !== "admin") {
+      query = query.eq("employee_id", currentEmployee.id);
+    } else {
+      // Admin bisa filter by employee_id tertentu jika perlu
+      const employeeId = searchParams.get("employee_id");
+      if (employeeId) {
+        query = query.eq("employee_id", employeeId);
+      }
     }
 
     if (status && status !== "all") {
@@ -37,7 +72,6 @@ export async function GET(request: NextRequest) {
     }
 
     const { data, error, count } = await query;
-
     if (error) throw error;
 
     return NextResponse.json({
@@ -63,11 +97,41 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
+
+    // ✅ FIX [C3]: Ambil employee_id dari session, bukan dari body
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { data: employee, error: empError } = await supabase
+      .from("employees")
+      .select("id, name, is_active")
+      .eq("user_id", user.id)
+      .single();
+
+    if (empError || !employee) {
+      return NextResponse.json(
+        { error: "Data karyawan tidak ditemukan" },
+        { status: 404 },
+      );
+    }
+
+    if (!employee.is_active) {
+      return NextResponse.json(
+        { error: "Akun Anda sudah dinonaktifkan" },
+        { status: 403 },
+      );
+    }
+
     const body = await request.json();
+    const { leave_type_id, start_date, end_date, reason } = body;
 
-    const { employee_id, leave_type_id, start_date, end_date, reason } = body;
-
-    if (!employee_id || !leave_type_id || !start_date || !end_date) {
+    if (!leave_type_id || !start_date || !end_date) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 },
@@ -91,14 +155,40 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const diffTime = Math.abs(end.getTime() - start.getTime());
-    const totalDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+    // ✅ FIX [H2]: Validasi tanggal tidak boleh masa lalu
+    const today = getTodayWIB();
+    if (start_date < today) {
+      return NextResponse.json(
+        { error: "Tidak bisa mengajukan cuti untuk tanggal yang sudah lewat" },
+        { status: 400 },
+      );
+    }
+
+    // ✅ FIX [H3]: Hitung hari kerja saja (exclude Sabtu & Minggu)
+    const totalDays = countWorkdays(start, end);
+
+    if (totalDays === 0) {
+      return NextResponse.json(
+        { error: "Tidak ada hari kerja dalam rentang tanggal yang dipilih" },
+        { status: 400 },
+      );
+    }
+
+    // Validasi maksimum 30 hari kerja per request
+    if (totalDays > 30) {
+      return NextResponse.json(
+        { error: "Maksimum pengajuan cuti adalah 30 hari kerja per request" },
+        { status: 400 },
+      );
+    }
 
     const year = start.getFullYear();
+
+    // Cek saldo cuti
     const { data: balance, error: balanceError } = await supabase
       .from("leave_balances")
       .select("*")
-      .eq("employee_id", employee_id)
+      .eq("employee_id", employee.id)
       .eq("leave_type_id", leave_type_id)
       .eq("year", year)
       .single();
@@ -107,20 +197,27 @@ export async function POST(request: NextRequest) {
       throw balanceError;
     }
 
-    if (balance && balance.remaining < totalDays) {
+    if (!balance) {
+      return NextResponse.json(
+        { error: "Saldo cuti tidak ditemukan. Hubungi admin." },
+        { status: 400 },
+      );
+    }
+
+    if (balance.remaining < totalDays) {
       return NextResponse.json(
         {
-          error: `Saldo cuti tidak cukup. Sisa saldo: ${balance.remaining} hari, dibutuhkan: ${totalDays} hari.`,
+          error: `Saldo cuti tidak cukup. Sisa saldo: ${balance.remaining} hari kerja, dibutuhkan: ${totalDays} hari kerja.`,
         },
         { status: 400 },
       );
     }
 
-    // ✅ FIX: Query overlap yang benar
+    // Cek overlap
     const { data: overlapping, error: overlapError } = await supabase
       .from("leave_requests")
       .select("id, start_date, end_date, status")
-      .eq("employee_id", employee_id)
+      .eq("employee_id", employee.id)
       .in("status", ["pending", "approved"])
       .lte("start_date", end_date)
       .gte("end_date", start_date);
@@ -134,10 +231,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Buat leave request
     const { data, error } = await supabase
       .from("leave_requests")
       .insert({
-        employee_id,
+        employee_id: employee.id, // dari session, bukan dari body
         leave_type_id,
         start_date,
         end_date,
@@ -148,17 +246,21 @@ export async function POST(request: NextRequest) {
       .select(
         `
         *,
-        leave_type:leave_types(*)
+        employee:employees!leave_requests_employee_id_fkey(id, name),
+        leave_type:leave_types(name)
       `,
       )
       .single();
 
     if (error) throw error;
 
+    // Kirim notifikasi ke admin (fire and forget)
+    notifyAdmins(supabase, data).catch(console.error);
+
     return NextResponse.json({
       success: true,
       data,
-      message: "Pengajuan cuti berhasil dikirim",
+      message: `Pengajuan cuti berhasil dikirim (${totalDays} hari kerja)`,
     });
   } catch (error) {
     console.error("Create leave request error:", error);
@@ -166,5 +268,76 @@ export async function POST(request: NextRequest) {
       { error: "Internal server error" },
       { status: 500 },
     );
+  }
+}
+
+/**
+ * ✅ FIX [H3]: Hitung jumlah hari kerja (Senin-Jumat) antara dua tanggal
+ * Tidak termasuk Sabtu dan Minggu
+ */
+function countWorkdays(start: Date, end: Date): number {
+  let count = 0;
+  const current = new Date(start);
+  current.setHours(0, 0, 0, 0);
+
+  const endDate = new Date(end);
+  endDate.setHours(0, 0, 0, 0);
+
+  while (current <= endDate) {
+    const dayOfWeek = current.getDay();
+    // 0 = Minggu, 6 = Sabtu
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      count++;
+    }
+    current.setDate(current.getDate() + 1);
+  }
+
+  return count;
+}
+
+/**
+ * Kirim notifikasi ke semua admin yang punya FCM token
+ */
+async function notifyAdmins(
+  supabase: Awaited<
+    ReturnType<typeof import("@/lib/supabase/server").createClient>
+  >,
+  leaveRequest: {
+    id: string;
+    total_days: number;
+    start_date: string;
+    end_date: string;
+    employee: { name: string } | null;
+    leave_type: { name: string } | null;
+  },
+) {
+  const { data: admins } = await supabase
+    .from("employees")
+    .select("fcm_token")
+    .eq("role", "admin")
+    .eq("is_active", true)
+    .not("fcm_token", "is", null);
+
+  if (!admins || admins.length === 0) return;
+
+  const adminTokens = admins
+    .map((a) => a.fcm_token)
+    .filter(Boolean) as string[];
+
+  if (adminTokens.length === 0) return;
+
+  const notification = buildNewLeaveRequestNotification({
+    employeeName: leaveRequest.employee?.name || "Karyawan",
+    leaveTypeName: leaveRequest.leave_type?.name || "Cuti",
+    startDate: formatDate(leaveRequest.start_date, { month: "short" }),
+    endDate: formatDate(leaveRequest.end_date, { month: "short" }),
+    totalDays: leaveRequest.total_days,
+    leaveRequestId: leaveRequest.id,
+  });
+
+  const result = await sendToMultipleDevices(adminTokens, notification);
+
+  if (result.invalidTokens.length > 0) {
+    cleanupInvalidTokens(result.invalidTokens);
   }
 }

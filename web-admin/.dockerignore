@@ -1,0 +1,21 @@
+# Exclude source code files and directories not needed in the final build stage
+node_modules
+.next
+.git
+.gitignore
+*.md
+*.swp
+.idea
+.vscode
+logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Exclude configuration files that might contain local secrets
+#.env
+.env*.local
+
+# Exclude the Dockerfile and .dockerignore itself
+Dockerfile
+.dockerignore

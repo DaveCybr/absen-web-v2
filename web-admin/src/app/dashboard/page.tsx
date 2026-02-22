@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatTime, getStatusColor, getStatusLabel } from "@/lib/utils";
+import { getTodayWIB } from "@/lib/attendance"; // ✅ FIX: Gunakan WIB
 import {
   Users,
   UserCheck,
@@ -14,7 +15,9 @@ import type { Attendance, Employee } from "@/types";
 
 async function getDashboardStats() {
   const supabase = await createClient();
-  const today = new Date().toISOString().split("T")[0];
+
+  // ✅ FIX: Gunakan WIB bukan UTC
+  const today = getTodayWIB();
 
   // Get total active employees
   const { count: totalEmployees } = await supabase
@@ -22,23 +25,22 @@ async function getDashboardStats() {
     .select("*", { count: "exact", head: true })
     .eq("is_active", true);
 
-  // Get today's attendances
+  // Get today's attendances dengan join employee
   const { data: todayAttendances } = await supabase
     .from("attendances")
     .select("*, employee:employees(*)")
     .eq("attendance_date", today);
 
-  const presentToday = todayAttendances?.filter(
-    (a) => a.status === "present" || a.status === "late"
-  ).length || 0;
+  const presentToday =
+    todayAttendances?.filter(
+      (a) => a.status === "present" || a.status === "late",
+    ).length || 0;
 
-  const lateToday = todayAttendances?.filter(
-    (a) => a.status === "late"
-  ).length || 0;
+  const lateToday =
+    todayAttendances?.filter((a) => a.status === "late").length || 0;
 
-  const onLeaveToday = todayAttendances?.filter(
-    (a) => a.status === "leave"
-  ).length || 0;
+  const onLeaveToday =
+    todayAttendances?.filter((a) => a.status === "leave").length || 0;
 
   // Get pending leave requests
   const { count: pendingLeaveRequests } = await supabase
@@ -149,45 +151,49 @@ export default async function DashboardPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {stats.recentAttendances.slice(0, 10).map((attendance: Attendance & { employee: Employee }) => (
-                <div
-                  key={attendance.id}
-                  className="flex items-center justify-between rounded-lg border p-3"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-medium text-primary">
-                      {attendance.employee?.name?.charAt(0).toUpperCase()}
+              {stats.recentAttendances
+                .slice(0, 10)
+                .map((attendance: Attendance & { employee: Employee }) => (
+                  <div
+                    key={attendance.id}
+                    className="flex items-center justify-between rounded-lg border p-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-medium text-primary">
+                        {attendance.employee?.name?.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="font-medium">
+                          {attendance.employee?.name}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          {attendance.employee?.department || "—"}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium">{attendance.employee?.name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {attendance.employee?.department || "—"}
-                      </p>
+                    <div className="flex items-center gap-4 text-sm">
+                      <div className="text-right">
+                        <p className="text-muted-foreground">Masuk</p>
+                        <p className="font-medium">
+                          {attendance.check_in_time
+                            ? formatTime(attendance.check_in_time)
+                            : "—"}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-muted-foreground">Pulang</p>
+                        <p className="font-medium">
+                          {attendance.check_out_time
+                            ? formatTime(attendance.check_out_time)
+                            : "—"}
+                        </p>
+                      </div>
+                      <Badge className={getStatusColor(attendance.status)}>
+                        {getStatusLabel(attendance.status)}
+                      </Badge>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4 text-sm">
-                    <div className="text-right">
-                      <p className="text-muted-foreground">Masuk</p>
-                      <p className="font-medium">
-                        {attendance.check_in_time
-                          ? formatTime(attendance.check_in_time)
-                          : "—"}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-muted-foreground">Pulang</p>
-                      <p className="font-medium">
-                        {attendance.check_out_time
-                          ? formatTime(attendance.check_out_time)
-                          : "—"}
-                      </p>
-                    </div>
-                    <Badge className={getStatusColor(attendance.status)}>
-                      {getStatusLabel(attendance.status)}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
+                ))}
             </div>
           )}
         </CardContent>

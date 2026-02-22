@@ -10,14 +10,43 @@ const TIMEZONE = "Asia/Jakarta"; // WIB (UTC+7)
  * Mendapatkan tanggal hari ini dalam format YYYY-MM-DD (timezone WIB)
  */
 export function getTodayWIB(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: TIMEZONE });
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 /**
  * Mendapatkan waktu sekarang dalam WIB
+ * ✅ FIX [H4]: Gunakan Intl.DateTimeFormat bukan toLocaleString
+ * toLocaleString tidak konsisten antar OS/Node version
  */
 export function getNowWIB(): Date {
-  return new Date(new Date().toLocaleString("en-US", { timeZone: TIMEZONE }));
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(new Date());
+  const get = (type: string) =>
+    parseInt(parts.find((p) => p.type === type)?.value || "0");
+
+  return new Date(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    get("hour"),
+    get("minute"),
+    get("second"),
+  );
 }
 
 /**
@@ -45,7 +74,7 @@ export function calculateDistance(
   lat2: number,
   lon2: number,
 ): number {
-  const R = 6371e3; // Radius bumi dalam meter
+  const R = 6371e3;
   const φ1 = (lat1 * Math.PI) / 180;
   const φ2 = (lat2 * Math.PI) / 180;
   const Δφ = ((lat2 - lat1) * Math.PI) / 180;
@@ -71,11 +100,23 @@ interface FaceVerifyResult {
 }
 
 /**
- * Verifikasi wajah menggunakan Face++ API
+ * ✅ FIX [C1]: Verifikasi wajah menggunakan Face++ API
+ *
+ * SEBELUMNYA (BUG):
+ * Menggunakan face_token yang disimpan di DB untuk compare.
+ * Face++ face_token EXPIRE SETELAH 24 JAM → check-in selalu gagal keesokan harinya.
+ *
+ * SESUDAH (FIX):
+ * Menggunakan image_base64_1 (fetch dari storage) vs image_base64_2 (foto baru).
+ * Tidak ada expiry karena tidak menggunakan token sementara.
+ *
+ * @param photoBase64  - Foto baru dari mobile (base64)
+ * @param faceImageUrl - URL foto referensi wajah di Supabase Storage
+ * @param threshold    - Minimum confidence (0-1)
  */
 export async function verifyFace(
   photoBase64: string,
-  faceToken: string,
+  faceImageUrl: string,
   threshold: number,
 ): Promise<FaceVerifyResult> {
   try {
@@ -83,13 +124,36 @@ export async function verifyFace(
     const apiSecret = process.env.FACEPP_API_SECRET;
 
     if (!apiKey || !apiSecret) {
-      throw new Error("Face++ API credentials not configured");
+      return {
+        success: false,
+        verified: false,
+        message: "Face verification service unavailable",
+      };
+    }
+
+    if (!faceImageUrl) {
+      return {
+        success: false,
+        verified: false,
+        message: "Foto wajah referensi tidak ditemukan. Silakan enroll ulang.",
+      };
+    }
+
+    // Fetch foto referensi dari Supabase Storage sebagai base64
+    const referenceBase64 = await fetchImageAsBase64(faceImageUrl);
+    if (!referenceBase64) {
+      return {
+        success: false,
+        verified: false,
+        message: "Gagal memuat foto referensi. Silakan enroll ulang.",
+      };
     }
 
     const formData = new FormData();
     formData.append("api_key", apiKey);
     formData.append("api_secret", apiSecret);
-    formData.append("face_token1", faceToken);
+    // Gunakan dua gambar base64, bukan face_token
+    formData.append("image_base64_1", referenceBase64);
     formData.append(
       "image_base64_2",
       photoBase64.replace(/^data:image\/\w+;base64,/, ""),
@@ -104,16 +168,37 @@ export async function verifyFace(
     );
 
     if (!response.ok) {
-      throw new Error(`Face++ API error: ${response.status}`);
+      console.error(`Face++ API HTTP error: ${response.status}`);
+      return {
+        success: false,
+        verified: false,
+        message: "Face verification service unavailable",
+      };
     }
 
     const result = await response.json();
 
     if (result.error_message) {
-      return { success: false, verified: false, message: result.error_message };
+      // Bedakan error "no face" vs error lainnya
+      if (
+        result.error_message.includes("NO_FACE") ||
+        result.error_message.includes("EMPTY_IMAGE")
+      ) {
+        return {
+          success: false,
+          verified: false,
+          message:
+            "Wajah tidak terdeteksi dalam foto. Pastikan wajah terlihat jelas.",
+        };
+      }
+      return {
+        success: false,
+        verified: false,
+        message: "Face verification service unavailable",
+      };
     }
 
-    // Face++ mengembalikan confidence dalam skala 0-100
+    // Face++ mengembalikan confidence 0-100, konversi ke 0-1
     const confidence = result.confidence / 100;
     const verified = confidence >= threshold;
 
@@ -121,7 +206,9 @@ export async function verifyFace(
       success: true,
       verified,
       confidence,
-      message: verified ? "Face verified" : "Face does not match",
+      message: verified
+        ? "Wajah terverifikasi"
+        : "Wajah tidak cocok. Pastikan pencahayaan cukup dan wajah terlihat jelas.",
     };
   } catch (error) {
     console.error("Face++ API error:", error);
@@ -133,6 +220,25 @@ export async function verifyFace(
   }
 }
 
+/**
+ * Fetch gambar dari URL dan konversi ke base64 string (tanpa prefix data:)
+ */
+async function fetchImageAsBase64(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.error(`Failed to fetch reference image: ${response.status}`);
+      return null;
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    return buffer.toString("base64");
+  } catch (error) {
+    console.error("fetchImageAsBase64 error:", error);
+    return null;
+  }
+}
+
 interface FaceDetectResult {
   success: boolean;
   face_token?: string;
@@ -141,7 +247,8 @@ interface FaceDetectResult {
 }
 
 /**
- * Deteksi wajah menggunakan Face++ API
+ * Deteksi wajah menggunakan Face++ API (untuk enroll)
+ * face_token hanya digunakan sementara saat enroll — tidak disimpan ke DB lagi
  */
 export async function detectFace(
   photoBase64: string,
@@ -151,7 +258,7 @@ export async function detectFace(
     const apiSecret = process.env.FACEPP_API_SECRET;
 
     if (!apiKey || !apiSecret) {
-      throw new Error("Face++ API credentials not configured");
+      return { success: false, message: "Face detection service unavailable" };
     }
 
     const formData = new FormData();
@@ -172,7 +279,7 @@ export async function detectFace(
     );
 
     if (!response.ok) {
-      throw new Error(`Face++ API error: ${response.status}`);
+      return { success: false, message: "Face detection service unavailable" };
     }
 
     const result = await response.json();
@@ -182,7 +289,10 @@ export async function detectFace(
     }
 
     if (!result.faces || result.faces.length === 0) {
-      return { success: false, message: "Tidak ada wajah terdeteksi" };
+      return {
+        success: false,
+        message: "Tidak ada wajah terdeteksi. Coba foto ulang.",
+      };
     }
 
     if (result.faces.length > 1) {
@@ -206,7 +316,7 @@ export async function detectFace(
 
     return {
       success: true,
-      face_token: face.face_token,
+      face_token: face.face_token, // hanya untuk validasi saat enroll, tidak disimpan
       face_quality: faceQuality,
     };
   } catch (error) {
@@ -219,9 +329,6 @@ export async function detectFace(
 // PHOTO UPLOAD UTILITY
 // =====================================================
 
-/**
- * Upload foto absensi ke Supabase Storage
- */
 export async function uploadAttendancePhoto(
   supabase: Awaited<ReturnType<typeof createClient>>,
   base64: string,
@@ -241,7 +348,7 @@ export async function uploadAttendancePhoto(
       });
 
     if (error) {
-      console.error("Upload error:", error);
+      console.error("Upload attendance photo error:", error);
       return null;
     }
 
@@ -251,14 +358,11 @@ export async function uploadAttendancePhoto(
 
     return urlData.publicUrl;
   } catch (error) {
-    console.error("Upload photo error:", error);
+    console.error("uploadAttendancePhoto error:", error);
     return null;
   }
 }
 
-/**
- * Upload foto wajah ke Supabase Storage
- */
 export async function uploadFacePhoto(
   supabase: Awaited<ReturnType<typeof createClient>>,
   base64: string,
@@ -277,7 +381,7 @@ export async function uploadFacePhoto(
       });
 
     if (error) {
-      console.error("Upload error:", error);
+      console.error("Upload face photo error:", error);
       return null;
     }
 
@@ -287,7 +391,7 @@ export async function uploadFacePhoto(
 
     return urlData.publicUrl;
   } catch (error) {
-    console.error("Upload face photo error:", error);
+    console.error("uploadFacePhoto error:", error);
     return null;
   }
 }

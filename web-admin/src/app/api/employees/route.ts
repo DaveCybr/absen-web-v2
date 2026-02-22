@@ -97,6 +97,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Buat employee record
+    // Database trigger `tr_init_leave_balances` otomatis inisialisasi leave_balances
     const { data: employee, error: empError } = await adminSupabase
       .from("employees")
       .insert({
@@ -118,9 +119,6 @@ export async function POST(request: NextRequest) {
       throw empError;
     }
 
-    // ✅ FIX: Inisialisasi leave balances untuk karyawan baru
-    await initLeaveBalances(adminSupabase, employee.id);
-
     return NextResponse.json({
       success: true,
       data: employee,
@@ -134,46 +132,6 @@ export async function POST(request: NextRequest) {
       },
       { status: 500 },
     );
-  }
-}
-
-/**
- * Inisialisasi leave balances untuk karyawan baru
- * berdasarkan semua leave types yang aktif
- */
-async function initLeaveBalances(
-  adminSupabase: ReturnType<typeof createAdminClient>,
-  employeeId: string,
-) {
-  try {
-    const currentYear = new Date().getFullYear();
-
-    // Ambil semua leave types aktif
-    const { data: leaveTypes, error } = await adminSupabase
-      .from("leave_types")
-      .select("id, default_quota")
-      .eq("is_active", true);
-
-    if (error || !leaveTypes?.length) return;
-
-    // Buat balance records
-    const balances = leaveTypes.map((lt) => ({
-      employee_id: employeeId,
-      leave_type_id: lt.id,
-      year: currentYear,
-      quota: lt.default_quota,
-      used: 0,
-    }));
-
-    const { error: insertError } = await adminSupabase
-      .from("leave_balances")
-      .insert(balances);
-
-    if (insertError) {
-      console.error("Failed to init leave balances:", insertError);
-    }
-  } catch (err) {
-    console.error("initLeaveBalances error:", err);
   }
 }
 
@@ -194,7 +152,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const activeOnly = searchParams.get("active") === "true";
     const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "100");
+    const limit = Math.min(parseInt(searchParams.get("limit") || "100"), 500); // cap at 500
     const offset = (page - 1) * limit;
 
     let query = adminSupabase

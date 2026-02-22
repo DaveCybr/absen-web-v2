@@ -30,8 +30,10 @@ export function OfficeSettingsForm({ settings }: OfficeSettingsFormProps) {
     radius_meters: settings?.radius_meters?.toString() || "100",
     default_check_in: settings?.default_check_in || "08:00",
     default_check_out: settings?.default_check_out || "17:00",
-    late_tolerance_minutes: settings?.late_tolerance_minutes?.toString() || "15",
-    face_similarity_threshold: settings?.face_similarity_threshold?.toString() || "0.80",
+    late_tolerance_minutes:
+      settings?.late_tolerance_minutes?.toString() || "15",
+    face_similarity_threshold:
+      settings?.face_similarity_threshold?.toString() || "0.80",
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -50,7 +52,9 @@ export function OfficeSettingsForm({ settings }: OfficeSettingsFormProps) {
         default_check_in: formData.default_check_in,
         default_check_out: formData.default_check_out,
         late_tolerance_minutes: parseInt(formData.late_tolerance_minutes),
-        face_similarity_threshold: parseFloat(formData.face_similarity_threshold),
+        face_similarity_threshold: parseFloat(
+          formData.face_similarity_threshold,
+        ),
       };
 
       if (settings?.id) {
@@ -95,7 +99,7 @@ export function OfficeSettingsForm({ settings }: OfficeSettingsFormProps) {
       },
       (err) => {
         setError("Gagal mendapatkan lokasi: " + err.message);
-      }
+      },
     );
   };
 
@@ -122,12 +126,16 @@ export function OfficeSettingsForm({ settings }: OfficeSettingsFormProps) {
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
-            <Label htmlFor="office_name" required>Nama Kantor</Label>
+            <Label htmlFor="office_name" required>
+              Nama Kantor
+            </Label>
             <Input
               id="office_name"
               value={formData.office_name}
-              onChange={(e) => setFormData({ ...formData, office_name: e.target.value })}
-              placeholder="PT Nano Indonesia Sakti"
+              onChange={(e) =>
+                setFormData({ ...formData, office_name: e.target.value })
+              }
+              placeholder="TEFA JTI INNOVATION"
               required
             />
           </div>
@@ -136,7 +144,9 @@ export function OfficeSettingsForm({ settings }: OfficeSettingsFormProps) {
             <Input
               id="office_address"
               value={formData.office_address}
-              onChange={(e) => setFormData({ ...formData, office_address: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, office_address: e.target.value })
+              }
               placeholder="Jl. Contoh No. 123, Kota"
             />
           </div>
@@ -150,43 +160,60 @@ export function OfficeSettingsForm({ settings }: OfficeSettingsFormProps) {
             <MapPin className="h-5 w-5 text-primary" />
             Lokasi GPS
           </div>
-          <Button type="button" variant="outline" size="sm" onClick={handleGetCurrentLocation}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleGetCurrentLocation}
+          >
             📍 Lokasi Saat Ini
           </Button>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-2">
-            <Label htmlFor="latitude" required>Latitude</Label>
+            <Label htmlFor="latitude" required>
+              Latitude
+            </Label>
             <Input
               id="latitude"
               type="number"
               step="any"
               value={formData.latitude}
-              onChange={(e) => setFormData({ ...formData, latitude: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, latitude: e.target.value })
+              }
               placeholder="-8.1845"
               required
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="longitude" required>Longitude</Label>
+            <Label htmlFor="longitude" required>
+              Longitude
+            </Label>
             <Input
               id="longitude"
               type="number"
               step="any"
               value={formData.longitude}
-              onChange={(e) => setFormData({ ...formData, longitude: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, longitude: e.target.value })
+              }
               placeholder="113.6681"
               required
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="radius_meters" required>Radius (meter)</Label>
+            <Label htmlFor="radius_meters" required>
+              Radius (meter)
+            </Label>
             <Input
               id="radius_meters"
               type="number"
               value={formData.radius_meters}
-              onChange={(e) => setFormData({ ...formData, radius_meters: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, radius_meters: e.target.value })
+              }
               placeholder="100"
               required
             />
@@ -221,32 +248,47 @@ export function OfficeSettingsForm({ settings }: OfficeSettingsFormProps) {
 
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-2">
-            <Label htmlFor="default_check_in" required>Jam Masuk</Label>
+            <Label htmlFor="default_check_in" required>
+              Jam Masuk
+            </Label>
             <Input
               id="default_check_in"
               type="time"
               value={formData.default_check_in}
-              onChange={(e) => setFormData({ ...formData, default_check_in: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, default_check_in: e.target.value })
+              }
               required
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="default_check_out" required>Jam Pulang</Label>
+            <Label htmlFor="default_check_out" required>
+              Jam Pulang
+            </Label>
             <Input
               id="default_check_out"
               type="time"
               value={formData.default_check_out}
-              onChange={(e) => setFormData({ ...formData, default_check_out: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, default_check_out: e.target.value })
+              }
               required
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="late_tolerance_minutes" required>Toleransi Terlambat (menit)</Label>
+            <Label htmlFor="late_tolerance_minutes" required>
+              Toleransi Terlambat (menit)
+            </Label>
             <Input
               id="late_tolerance_minutes"
               type="number"
               value={formData.late_tolerance_minutes}
-              onChange={(e) => setFormData({ ...formData, late_tolerance_minutes: e.target.value })}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  late_tolerance_minutes: e.target.value,
+                })
+              }
               placeholder="15"
               required
             />
@@ -272,7 +314,12 @@ export function OfficeSettingsForm({ settings }: OfficeSettingsFormProps) {
             min="0"
             max="1"
             value={formData.face_similarity_threshold}
-            onChange={(e) => setFormData({ ...formData, face_similarity_threshold: e.target.value })}
+            onChange={(e) =>
+              setFormData({
+                ...formData,
+                face_similarity_threshold: e.target.value,
+              })
+            }
             placeholder="0.80"
             required
           />

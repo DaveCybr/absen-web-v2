@@ -14,6 +14,11 @@ interface LeaveRequestActionsProps {
   request: LeaveRequest & { employee: Employee; leave_type: LeaveType };
 }
 
+/**
+ * CATATAN: Update leave_balance dilakukan OTOMATIS oleh database trigger.
+ * Komponen ini hanya perlu update status leave_request.
+ * Jangan tambahkan manual balance update di sini.
+ */
 export function LeaveRequestActions({ request }: LeaveRequestActionsProps) {
   const router = useRouter();
   const supabase = createClient();
@@ -21,7 +26,6 @@ export function LeaveRequestActions({ request }: LeaveRequestActionsProps) {
   const [showReject, setShowReject] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [loading, setLoading] = useState(false);
-  // ✅ FIX: Ganti alert() dengan Toast
   const [toast, setToast] = useState<{
     message: string;
     type: "success" | "error";
@@ -35,30 +39,27 @@ export function LeaveRequestActions({ request }: LeaveRequestActionsProps) {
         data: { user },
       } = await supabase.auth.getUser();
 
+      if (!user) throw new Error("Not authenticated");
+
       const { data: adminEmployee } = await supabase
         .from("employees")
         .select("id")
-        .eq("user_id", user?.id)
+        .eq("user_id", user.id)
         .single();
 
+      if (!adminEmployee) throw new Error("Admin not found");
+
+      // Update status — DB trigger otomatis update leave_balance
       const { error } = await supabase
         .from("leave_requests")
         .update({
           status: "approved",
-          approved_by: adminEmployee?.id,
+          approved_by: adminEmployee.id,
           approved_at: new Date().toISOString(),
         })
         .eq("id", request.id);
 
       if (error) throw error;
-
-      // ✅ Update leave balance setelah approve
-      await updateLeaveBalance(
-        request.employee_id,
-        request.leave_type_id,
-        request.total_days,
-        new Date(request.start_date).getFullYear(),
-      );
 
       setToast({
         message: "Pengajuan cuti berhasil disetujui",
@@ -70,48 +71,6 @@ export function LeaveRequestActions({ request }: LeaveRequestActionsProps) {
       setToast({ message: "Gagal menyetujui pengajuan", type: "error" });
     } finally {
       setLoading(false);
-    }
-  };
-
-  // ✅ Update leave balance setelah approve
-  const updateLeaveBalance = async (
-    employeeId: string,
-    leaveTypeId: string,
-    totalDays: number,
-    year: number,
-  ) => {
-    try {
-      const { data: balance } = await supabase
-        .from("leave_balances")
-        .select("id, used")
-        .eq("employee_id", employeeId)
-        .eq("leave_type_id", leaveTypeId)
-        .eq("year", year)
-        .single();
-
-      if (balance) {
-        await supabase
-          .from("leave_balances")
-          .update({ used: balance.used + totalDays })
-          .eq("id", balance.id);
-      } else {
-        // Buat balance baru jika belum ada
-        const { data: leaveType } = await supabase
-          .from("leave_types")
-          .select("default_quota")
-          .eq("id", leaveTypeId)
-          .single();
-
-        await supabase.from("leave_balances").insert({
-          employee_id: employeeId,
-          leave_type_id: leaveTypeId,
-          year,
-          quota: leaveType?.default_quota || 0,
-          used: totalDays,
-        });
-      }
-    } catch (err) {
-      console.error("Failed to update leave balance:", err);
     }
   };
 
@@ -128,17 +87,22 @@ export function LeaveRequestActions({ request }: LeaveRequestActionsProps) {
         data: { user },
       } = await supabase.auth.getUser();
 
+      if (!user) throw new Error("Not authenticated");
+
       const { data: adminEmployee } = await supabase
         .from("employees")
         .select("id")
-        .eq("user_id", user?.id)
+        .eq("user_id", user.id)
         .single();
 
+      if (!adminEmployee) throw new Error("Admin not found");
+
+      // Update status — DB trigger akan handle rollback balance jika sebelumnya approved
       const { error } = await supabase
         .from("leave_requests")
         .update({
           status: "rejected",
-          approved_by: adminEmployee?.id,
+          approved_by: adminEmployee.id,
           approved_at: new Date().toISOString(),
           rejection_reason: rejectReason,
         })
@@ -160,7 +124,6 @@ export function LeaveRequestActions({ request }: LeaveRequestActionsProps) {
 
   return (
     <>
-      {/* ✅ Toast notification */}
       {toast && (
         <Toast
           message={toast.message}

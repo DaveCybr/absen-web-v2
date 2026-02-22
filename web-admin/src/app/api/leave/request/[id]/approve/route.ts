@@ -1,5 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { sendToDevice, buildLeaveApprovedNotification } from "@/lib/fcm";
+import { cleanupInvalidTokens } from "@/lib/fcm-cleanup";
+import { formatDate } from "@/lib/utils";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -30,9 +33,16 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    // Ambil leave request + data employee + leave type sekaligus
     const { data: leaveRequest, error: fetchError } = await supabase
       .from("leave_requests")
-      .select("*")
+      .select(
+        `
+        *,
+        employee:employees!leave_requests_employee_id_fkey(id, name, fcm_token),
+        leave_type:leave_types(name)
+      `,
+      )
       .eq("id", id)
       .single();
 
@@ -50,7 +60,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // ✅ FIX: Gunakan FK hint eksplisit pada select setelah update
+    // Update status → DB trigger otomatis update leave_balance
     const { data, error } = await supabase
       .from("leave_requests")
       .update({
@@ -71,14 +81,24 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     if (error) throw error;
 
-    // Update leave balance
-    await updateLeaveBalance(
-      supabase,
-      leaveRequest.employee_id,
-      leaveRequest.leave_type_id,
-      leaveRequest.total_days,
-      new Date(leaveRequest.start_date).getFullYear(),
-    );
+    // ✅ Kirim FCM notification ke karyawan (fire and forget)
+    const fcmToken = leaveRequest.employee?.fcm_token;
+    if (fcmToken) {
+      const notification = buildLeaveApprovedNotification({
+        employeeName: leaveRequest.employee.name,
+        leaveTypeName: leaveRequest.leave_type?.name || "Cuti",
+        startDate: formatDate(leaveRequest.start_date, { month: "short" }),
+        endDate: formatDate(leaveRequest.end_date, { month: "short" }),
+        totalDays: leaveRequest.total_days,
+        leaveRequestId: id,
+      });
+
+      sendToDevice(fcmToken, notification).then((result) => {
+        if (result.tokenInvalid) {
+          cleanupInvalidTokens([fcmToken]);
+        }
+      });
+    }
 
     return NextResponse.json({
       success: true,
@@ -91,48 +111,5 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       { error: "Internal server error" },
       { status: 500 },
     );
-  }
-}
-
-async function updateLeaveBalance(
-  supabase: Awaited<
-    ReturnType<typeof import("@/lib/supabase/server").createClient>
-  >,
-  employeeId: string,
-  leaveTypeId: string,
-  totalDays: number,
-  year: number,
-) {
-  try {
-    const { data: balance } = await supabase
-      .from("leave_balances")
-      .select("id, used")
-      .eq("employee_id", employeeId)
-      .eq("leave_type_id", leaveTypeId)
-      .eq("year", year)
-      .single();
-
-    if (balance) {
-      await supabase
-        .from("leave_balances")
-        .update({ used: balance.used + totalDays })
-        .eq("id", balance.id);
-    } else {
-      const { data: leaveType } = await supabase
-        .from("leave_types")
-        .select("default_quota")
-        .eq("id", leaveTypeId)
-        .single();
-
-      await supabase.from("leave_balances").insert({
-        employee_id: employeeId,
-        leave_type_id: leaveTypeId,
-        year,
-        quota: leaveType?.default_quota || 0,
-        used: totalDays,
-      });
-    }
-  } catch (err) {
-    console.error("Failed to update leave balance:", err);
   }
 }

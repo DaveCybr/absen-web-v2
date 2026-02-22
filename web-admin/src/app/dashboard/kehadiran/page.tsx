@@ -9,7 +9,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatDate, formatTime, formatDuration, getStatusColor, getStatusLabel } from "@/lib/utils";
+import {
+  formatDate,
+  formatTime,
+  formatDuration,
+  getStatusColor,
+  getStatusLabel,
+} from "@/lib/utils";
+import { getTodayWIB } from "@/lib/attendance"; // ✅ FIX: Gunakan WIB
 import { AttendanceFilters } from "./attendance-filters";
 import type { Attendance, Employee } from "@/types";
 
@@ -27,19 +34,17 @@ async function getAttendances(filters: {
   department?: string;
 }) {
   const supabase = await createClient();
-  
+
   let query = supabase
     .from("attendances")
     .select("*, employee:employees(*)")
     .order("check_in_time", { ascending: false });
 
-  // Filter by date
+  // ✅ FIX: Default ke tanggal WIB bukan UTC
   if (filters.date) {
     query = query.eq("attendance_date", filters.date);
   } else {
-    // Default to today
-    const today = new Date().toISOString().split("T")[0];
-    query = query.eq("attendance_date", today);
+    query = query.eq("attendance_date", getTodayWIB());
   }
 
   // Filter by status
@@ -56,10 +61,10 @@ async function getAttendances(filters: {
 
   // Filter by department (after fetch since it's in joined table)
   let result = data as (Attendance & { employee: Employee })[];
-  
+
   if (filters.department && filters.department !== "all") {
     result = result.filter(
-      (a) => a.employee?.department === filters.department
+      (a) => a.employee?.department === filters.department,
     );
   }
 
@@ -68,13 +73,16 @@ async function getAttendances(filters: {
 
 async function getDepartments() {
   const supabase = await createClient();
-  
+
   const { data } = await supabase
     .from("employees")
     .select("department")
-    .not("department", "is", null);
+    .not("department", "is", null)
+    .eq("is_active", true);
 
-  const departments = [...new Set(data?.map((e) => e.department).filter(Boolean))];
+  const departments = [
+    ...new Set(data?.map((e) => e.department).filter(Boolean)),
+  ];
   return departments as string[];
 }
 
@@ -83,16 +91,15 @@ export default async function KehadiranPage({ searchParams }: PageProps) {
   const attendances = await getAttendances(params);
   const departments = await getDepartments();
 
-  const displayDate = params.date || new Date().toISOString().split("T")[0];
+  // ✅ FIX: Default display date juga WIB
+  const displayDate = params.date || getTodayWIB();
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Kehadiran</h1>
-        <p className="text-muted-foreground">
-          Monitoring kehadiran karyawan
-        </p>
+        <p className="text-muted-foreground">Monitoring kehadiran karyawan</p>
       </div>
 
       {/* Filters */}
@@ -133,14 +140,18 @@ export default async function KehadiranPage({ searchParams }: PageProps) {
                           {attendance.employee?.name?.charAt(0).toUpperCase()}
                         </div>
                         <div>
-                          <p className="font-medium">{attendance.employee?.name}</p>
+                          <p className="font-medium">
+                            {attendance.employee?.name}
+                          </p>
                           <p className="text-xs text-muted-foreground">
                             {attendance.employee?.position || "—"}
                           </p>
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell>{attendance.employee?.department || "—"}</TableCell>
+                    <TableCell>
+                      {attendance.employee?.department || "—"}
+                    </TableCell>
                     <TableCell>
                       {attendance.check_in_time
                         ? formatTime(attendance.check_in_time)

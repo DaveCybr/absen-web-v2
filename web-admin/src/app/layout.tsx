@@ -5,7 +5,7 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Absensi Admin - PT Nano Indonesia Sakti",
+  title: "Absensi Admin - Tefa JTI INNOVATION",
   description: "Sistem Manajemen Kehadiran Karyawan",
 };
 
