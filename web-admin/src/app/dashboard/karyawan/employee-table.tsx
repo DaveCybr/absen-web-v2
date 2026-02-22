@@ -52,10 +52,10 @@ export function EmployeeTable({ employees }: EmployeeTableProps) {
       ),
     },
     {
-      key: "face_token",
+      key: "face_image_url",
       label: "Wajah",
       render: (employee: Employee) =>
-        employee.face_token ? (
+        employee.face_image_url ? (
           <Badge variant="success">Terdaftar</Badge>
         ) : (
           <Badge variant="outline">Belum</Badge>

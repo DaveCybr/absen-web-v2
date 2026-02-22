@@ -14,48 +14,44 @@ export async function updateSession(request: NextRequest) {
         getAll() {
           return request.cookies.getAll();
         },
-        setAll(cookiesToSet) {
+        setAll(
+          cookiesToSet: {
+            name: string;
+            value: string;
+            options?: Parameters<typeof supabaseResponse.cookies.set>[2];
+          }[],
+        ) {
           cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
+            request.cookies.set(name, value),
           );
-          supabaseResponse = NextResponse.next({
-            request,
-          });
+          supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
+            supabaseResponse.cookies.set(name, value, options),
           );
         },
       },
-    }
+    },
   );
-
-  // Do not run code between createServerClient and
-  // supabase.auth.getUser(). A simple mistake could make it very hard to debug
-  // issues with users being randomly logged out.
 
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Protected routes
   const isAuthPage = request.nextUrl.pathname.startsWith("/login");
   const isDashboard = request.nextUrl.pathname.startsWith("/dashboard");
 
   if (!user && isDashboard) {
-    // Not logged in and trying to access dashboard
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
   }
 
   if (user && isAuthPage) {
-    // Already logged in and trying to access login page
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     return NextResponse.redirect(url);
   }
 
-  // Check if user is admin for dashboard access
   if (user && isDashboard) {
     const { data: employee } = await supabase
       .from("employees")
@@ -64,7 +60,6 @@ export async function updateSession(request: NextRequest) {
       .single();
 
     if (!employee || employee.role !== "admin") {
-      // Not an admin, redirect to unauthorized page
       const url = request.nextUrl.clone();
       url.pathname = "/unauthorized";
       return NextResponse.redirect(url);

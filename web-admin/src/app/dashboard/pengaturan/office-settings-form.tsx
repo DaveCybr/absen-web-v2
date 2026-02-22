@@ -6,8 +6,8 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent } from "@/components/ui/card";
-import { MapPin, Clock, Shield } from "lucide-react";
+import { Clock, Shield, MapPin } from "lucide-react";
+import { LocationMapPicker } from "@/components/location-map-picker";
 import type { OfficeSettings } from "@/types";
 
 interface OfficeSettingsFormProps {
@@ -25,16 +25,18 @@ export function OfficeSettingsForm({ settings }: OfficeSettingsFormProps) {
   const [formData, setFormData] = useState({
     office_name: settings?.office_name || "",
     office_address: settings?.office_address || "",
-    latitude: settings?.latitude?.toString() || "",
-    longitude: settings?.longitude?.toString() || "",
-    radius_meters: settings?.radius_meters?.toString() || "100",
+    latitude: settings?.latitude ?? (null as number | null),
+    longitude: settings?.longitude ?? (null as number | null),
+    radius_meters: settings?.radius_meters ?? 100,
     default_check_in: settings?.default_check_in || "08:00",
     default_check_out: settings?.default_check_out || "17:00",
-    late_tolerance_minutes:
-      settings?.late_tolerance_minutes?.toString() || "15",
-    face_similarity_threshold:
-      settings?.face_similarity_threshold?.toString() || "0.80",
+    late_tolerance_minutes: settings?.late_tolerance_minutes ?? 15,
+    face_similarity_threshold: settings?.face_similarity_threshold ?? 0.8,
   });
+
+  const handleMapChange = (lat: number, lng: number) => {
+    setFormData((prev) => ({ ...prev, latitude: lat, longitude: lng }));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,35 +44,35 @@ export function OfficeSettingsForm({ settings }: OfficeSettingsFormProps) {
     setError("");
     setSuccess(false);
 
+    if (!formData.latitude || !formData.longitude) {
+      setError("Pilih lokasi kantor pada peta terlebih dahulu");
+      setLoading(false);
+      return;
+    }
+
     try {
       const data = {
         office_name: formData.office_name,
         office_address: formData.office_address || null,
-        latitude: parseFloat(formData.latitude),
-        longitude: parseFloat(formData.longitude),
-        radius_meters: parseInt(formData.radius_meters),
+        latitude: formData.latitude,
+        longitude: formData.longitude,
+        radius_meters: formData.radius_meters,
         default_check_in: formData.default_check_in,
         default_check_out: formData.default_check_out,
-        late_tolerance_minutes: parseInt(formData.late_tolerance_minutes),
-        face_similarity_threshold: parseFloat(
-          formData.face_similarity_threshold,
-        ),
+        late_tolerance_minutes: formData.late_tolerance_minutes,
+        face_similarity_threshold: formData.face_similarity_threshold,
       };
 
       if (settings?.id) {
-        // Update existing
         const { error: updateError } = await supabase
           .from("office_settings")
           .update(data)
           .eq("id", settings.id);
-
         if (updateError) throw updateError;
       } else {
-        // Insert new
         const { error: insertError } = await supabase
           .from("office_settings")
           .insert(data);
-
         if (insertError) throw insertError;
       }
 
@@ -83,46 +85,26 @@ export function OfficeSettingsForm({ settings }: OfficeSettingsFormProps) {
     }
   };
 
-  const handleGetCurrentLocation = () => {
-    if (!navigator.geolocation) {
-      setError("Geolocation tidak didukung browser ini");
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setFormData({
-          ...formData,
-          latitude: position.coords.latitude.toFixed(8),
-          longitude: position.coords.longitude.toFixed(8),
-        });
-      },
-      (err) => {
-        setError("Gagal mendapatkan lokasi: " + err.message);
-      },
-    );
-  };
-
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-8">
       {error && (
-        <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+        <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive border border-destructive/20">
           {error}
         </div>
       )}
 
       {success && (
-        <div className="rounded-md bg-green-50 p-3 text-sm text-green-700">
-          Pengaturan berhasil disimpan
+        <div className="rounded-lg bg-green-50 p-3 text-sm text-green-700 border border-green-200">
+          ✓ Pengaturan berhasil disimpan
         </div>
       )}
 
-      {/* Office Info */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-2 text-lg font-semibold">
-          <MapPin className="h-5 w-5 text-primary" />
+      {/* ── Informasi Kantor ── */}
+      <section className="space-y-4">
+        <h3 className="flex items-center gap-2 text-base font-semibold">
+          <MapPin className="h-4 w-4 text-primary" />
           Informasi Kantor
-        </div>
+        </h3>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
@@ -151,100 +133,76 @@ export function OfficeSettingsForm({ settings }: OfficeSettingsFormProps) {
             />
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* GPS Location */}
-      <div className="space-y-4">
+      {/* ── Lokasi GPS ── */}
+      <section className="space-y-4">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-lg font-semibold">
-            <MapPin className="h-5 w-5 text-primary" />
-            Lokasi GPS
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleGetCurrentLocation}
-          >
-            📍 Lokasi Saat Ini
-          </Button>
+          <h3 className="flex items-center gap-2 text-base font-semibold">
+            <MapPin className="h-4 w-4 text-primary" />
+            Lokasi Kantor
+          </h3>
+          {formData.latitude && formData.longitude && (
+            <a
+              href={`https://www.google.com/maps?q=${formData.latitude},${formData.longitude}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-primary hover:underline"
+            >
+              Buka di Google Maps ↗
+            </a>
+          )}
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-3">
-          <div className="space-y-2">
-            <Label htmlFor="latitude" required>
-              Latitude
-            </Label>
-            <Input
-              id="latitude"
-              type="number"
-              step="any"
-              value={formData.latitude}
-              onChange={(e) =>
-                setFormData({ ...formData, latitude: e.target.value })
-              }
-              placeholder="-8.1845"
-              required
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="longitude" required>
-              Longitude
-            </Label>
-            <Input
-              id="longitude"
-              type="number"
-              step="any"
-              value={formData.longitude}
-              onChange={(e) =>
-                setFormData({ ...formData, longitude: e.target.value })
-              }
-              placeholder="113.6681"
-              required
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="radius_meters" required>
-              Radius (meter)
-            </Label>
+        <p className="text-sm text-muted-foreground -mt-2">
+          Klik pada peta atau seret marker untuk menentukan lokasi kantor.
+          Lingkaran biru menunjukkan radius absensi.
+        </p>
+
+        {/* Map picker */}
+        <LocationMapPicker
+          latitude={formData.latitude}
+          longitude={formData.longitude}
+          radiusMeters={formData.radius_meters}
+          onChange={handleMapChange}
+        />
+
+        {/* Radius input */}
+        <div className="max-w-xs space-y-2">
+          <Label htmlFor="radius_meters" required>
+            Radius Absensi (meter)
+          </Label>
+          <div className="flex items-center gap-3">
             <Input
               id="radius_meters"
               type="number"
+              min={10}
+              max={5000}
               value={formData.radius_meters}
               onChange={(e) =>
-                setFormData({ ...formData, radius_meters: e.target.value })
+                setFormData({
+                  ...formData,
+                  radius_meters: parseInt(e.target.value) || 100,
+                })
               }
-              placeholder="100"
               required
             />
+            <span className="text-sm text-muted-foreground whitespace-nowrap">
+              meter
+            </span>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Karyawan harus berada dalam radius ini saat absen
+          </p>
         </div>
+      </section>
 
-        {formData.latitude && formData.longitude && (
-          <Card>
-            <CardContent className="p-3">
-              <p className="text-sm text-muted-foreground">
-                Preview lokasi:{" "}
-                <a
-                  href={`https://www.google.com/maps?q=${formData.latitude},${formData.longitude}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary hover:underline"
-                >
-                  Lihat di Google Maps ↗
-                </a>
-              </p>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-
-      {/* Working Hours */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-2 text-lg font-semibold">
-          <Clock className="h-5 w-5 text-primary" />
+      {/* ── Jam Kerja ── */}
+      <section className="space-y-4">
+        <h3 className="flex items-center gap-2 text-base font-semibold">
+          <Clock className="h-4 w-4 text-primary" />
           Jam Kerja
-        </div>
+        </h3>
 
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-2">
@@ -277,60 +235,68 @@ export function OfficeSettingsForm({ settings }: OfficeSettingsFormProps) {
           </div>
           <div className="space-y-2">
             <Label htmlFor="late_tolerance_minutes" required>
-              Toleransi Terlambat (menit)
+              Toleransi Terlambat
             </Label>
-            <Input
-              id="late_tolerance_minutes"
-              type="number"
-              value={formData.late_tolerance_minutes}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  late_tolerance_minutes: e.target.value,
-                })
-              }
-              placeholder="15"
-              required
-            />
+            <div className="flex items-center gap-2">
+              <Input
+                id="late_tolerance_minutes"
+                type="number"
+                min={0}
+                max={120}
+                value={formData.late_tolerance_minutes}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    late_tolerance_minutes: parseInt(e.target.value) || 0,
+                  })
+                }
+                required
+              />
+              <span className="text-sm text-muted-foreground whitespace-nowrap">
+                menit
+              </span>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Face Recognition */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-2 text-lg font-semibold">
-          <Shield className="h-5 w-5 text-primary" />
+      {/* ── Face Recognition ── */}
+      <section className="space-y-4">
+        <h3 className="flex items-center gap-2 text-base font-semibold">
+          <Shield className="h-4 w-4 text-primary" />
           Face Recognition
-        </div>
+        </h3>
 
         <div className="max-w-xs space-y-2">
           <Label htmlFor="face_similarity_threshold" required>
-            Threshold Kecocokan Wajah (0-1)
+            Threshold Kecocokan Wajah
           </Label>
-          <Input
-            id="face_similarity_threshold"
-            type="number"
-            step="0.01"
-            min="0"
-            max="1"
-            value={formData.face_similarity_threshold}
-            onChange={(e) =>
-              setFormData({
-                ...formData,
-                face_similarity_threshold: e.target.value,
-              })
-            }
-            placeholder="0.80"
-            required
-          />
+          <div className="flex items-center gap-3">
+            <Input
+              id="face_similarity_threshold"
+              type="number"
+              step="0.01"
+              min="0.5"
+              max="1"
+              value={formData.face_similarity_threshold}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  face_similarity_threshold: parseFloat(e.target.value) || 0.8,
+                })
+              }
+              required
+            />
+            <span className="text-sm text-muted-foreground">/ 1.0</span>
+          </div>
           <p className="text-xs text-muted-foreground">
-            Nilai lebih tinggi = lebih ketat (recommended: 0.75 - 0.85)
+            Semakin tinggi = semakin ketat (rekomendasi: 0.75 – 0.85)
           </p>
         </div>
-      </div>
+      </section>
 
       {/* Submit */}
-      <div className="flex justify-end">
+      <div className="flex justify-end pt-2 border-t">
         <Button type="submit" loading={loading}>
           Simpan Pengaturan
         </Button>

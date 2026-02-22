@@ -64,10 +64,12 @@ export default function DashboardLayout({
             {/* Logo */}
             <div className="flex h-16 items-center justify-between px-4 border-b">
               <Link href="/dashboard" className="flex items-center gap-2">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
+                {/* <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
                   <Clock className="h-5 w-5 text-primary-foreground" />
-                </div>
-                <span className="font-semibold text-lg">Absensi</span>
+                </div> */}
+                <span className="font-semibold text-lg text-center m-auto">
+                  JTI INNOVATION PRESENSI
+                </span>
               </Link>
               <Button
                 variant="ghost"

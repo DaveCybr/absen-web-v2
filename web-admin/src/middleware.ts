@@ -46,6 +46,10 @@ export async function middleware(request: NextRequest) {
     });
   }
 
+  if (pathname.startsWith("/setup") || pathname.startsWith("/api/setup")) {
+    return NextResponse.next();
+  }
+
   // ✅ Rate limiting untuk API routes
   if (pathname.startsWith("/api/")) {
     const ip = getClientIP(request);
