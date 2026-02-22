@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Toast } from "@/components/ui/toast";
 import { Check, X } from "lucide-react";
 import type { LeaveRequest, Employee, LeaveType } from "@/types";
 
@@ -20,13 +21,20 @@ export function LeaveRequestActions({ request }: LeaveRequestActionsProps) {
   const [showReject, setShowReject] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [loading, setLoading] = useState(false);
+  // ✅ FIX: Ganti alert() dengan Toast
+  const [toast, setToast] = useState<{
+    message: string;
+    type: "success" | "error";
+  } | null>(null);
 
   const handleApprove = async () => {
     setLoading(true);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
       const { data: adminEmployee } = await supabase
         .from("employees")
         .select("id")
@@ -44,26 +52,82 @@ export function LeaveRequestActions({ request }: LeaveRequestActionsProps) {
 
       if (error) throw error;
 
+      // ✅ Update leave balance setelah approve
+      await updateLeaveBalance(
+        request.employee_id,
+        request.leave_type_id,
+        request.total_days,
+        new Date(request.start_date).getFullYear(),
+      );
+
+      setToast({
+        message: "Pengajuan cuti berhasil disetujui",
+        type: "success",
+      });
       router.refresh();
     } catch (err) {
       console.error("Error approving request:", err);
-      alert("Gagal menyetujui pengajuan");
+      setToast({ message: "Gagal menyetujui pengajuan", type: "error" });
     } finally {
       setLoading(false);
     }
   };
 
+  // ✅ Update leave balance setelah approve
+  const updateLeaveBalance = async (
+    employeeId: string,
+    leaveTypeId: string,
+    totalDays: number,
+    year: number,
+  ) => {
+    try {
+      const { data: balance } = await supabase
+        .from("leave_balances")
+        .select("id, used")
+        .eq("employee_id", employeeId)
+        .eq("leave_type_id", leaveTypeId)
+        .eq("year", year)
+        .single();
+
+      if (balance) {
+        await supabase
+          .from("leave_balances")
+          .update({ used: balance.used + totalDays })
+          .eq("id", balance.id);
+      } else {
+        // Buat balance baru jika belum ada
+        const { data: leaveType } = await supabase
+          .from("leave_types")
+          .select("default_quota")
+          .eq("id", leaveTypeId)
+          .single();
+
+        await supabase.from("leave_balances").insert({
+          employee_id: employeeId,
+          leave_type_id: leaveTypeId,
+          year,
+          quota: leaveType?.default_quota || 0,
+          used: totalDays,
+        });
+      }
+    } catch (err) {
+      console.error("Failed to update leave balance:", err);
+    }
+  };
+
   const handleReject = async () => {
     if (!rejectReason.trim()) {
-      alert("Masukkan alasan penolakan");
+      setToast({ message: "Masukkan alasan penolakan", type: "error" });
       return;
     }
 
     setLoading(true);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
       const { data: adminEmployee } = await supabase
         .from("employees")
         .select("id")
@@ -83,10 +147,12 @@ export function LeaveRequestActions({ request }: LeaveRequestActionsProps) {
       if (error) throw error;
 
       setShowReject(false);
+      setRejectReason("");
+      setToast({ message: "Pengajuan cuti berhasil ditolak", type: "success" });
       router.refresh();
     } catch (err) {
       console.error("Error rejecting request:", err);
-      alert("Gagal menolak pengajuan");
+      setToast({ message: "Gagal menolak pengajuan", type: "error" });
     } finally {
       setLoading(false);
     }
@@ -94,6 +160,15 @@ export function LeaveRequestActions({ request }: LeaveRequestActionsProps) {
 
   return (
     <>
+      {/* ✅ Toast notification */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
+
       <div className="flex items-center justify-end gap-2">
         <Button
           size="sm"
@@ -117,7 +192,7 @@ export function LeaveRequestActions({ request }: LeaveRequestActionsProps) {
         </Button>
       </div>
 
-      {/* Reject Modal */}
+      {/* Modal Tolak */}
       {showReject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-sm rounded-lg bg-white p-6 shadow-xl">
@@ -142,7 +217,10 @@ export function LeaveRequestActions({ request }: LeaveRequestActionsProps) {
               <Button
                 variant="outline"
                 className="flex-1"
-                onClick={() => setShowReject(false)}
+                onClick={() => {
+                  setShowReject(false);
+                  setRejectReason("");
+                }}
               >
                 Batal
               </Button>

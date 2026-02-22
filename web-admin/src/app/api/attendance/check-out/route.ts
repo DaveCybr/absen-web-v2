@@ -16,12 +16,16 @@ interface CheckOutRequest {
   photo_base64: string;
 }
 
+// ✅ Batas ukuran foto base64: ~5MB
+const MAX_PHOTO_BASE64_LENGTH = 7 * 1024 * 1024;
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
     const body: CheckOutRequest = await request.json();
     const { employee_id, latitude, longitude, photo_base64 } = body;
 
+    // Validasi field wajib
     if (!employee_id || !latitude || !longitude || !photo_base64) {
       return NextResponse.json(
         { error: "Missing required fields" },
@@ -29,7 +33,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get employee data
+    // ✅ FIX: Validasi ukuran foto
+    if (photo_base64.length > MAX_PHOTO_BASE64_LENGTH) {
+      return NextResponse.json(
+        { error: "Ukuran foto terlalu besar. Maksimal 5MB." },
+        { status: 400 },
+      );
+    }
+
+    // Validasi format base64
+    if (!photo_base64.startsWith("data:image/")) {
+      return NextResponse.json(
+        { error: "Format foto tidak valid" },
+        { status: 400 },
+      );
+    }
+
+    // Validasi koordinat
+    if (
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      return NextResponse.json(
+        { error: "Koordinat GPS tidak valid" },
+        { status: 400 },
+      );
+    }
+
+    // Ambil data karyawan
     const { data: employee, error: empError } = await supabase
       .from("employees")
       .select("*")
@@ -53,7 +86,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get office settings
+    // Ambil pengaturan kantor
     const { data: settings, error: settingsError } = await supabase
       .from("office_settings")
       .select("*")
@@ -66,7 +99,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check attendance today (WIB timezone)
+    // ✅ FIX: Cek kehadiran hari ini menggunakan WIB
     const today = getTodayWIB();
     const { data: attendance, error: attError } = await supabase
       .from("attendances")
@@ -89,7 +122,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate GPS location
+    // Validasi lokasi GPS
     const distance = calculateDistance(
       latitude,
       longitude,
@@ -98,7 +131,7 @@ export async function POST(request: NextRequest) {
     );
     const locationVerified = distance <= settings.radius_meters;
 
-    // Verify face
+    // Verifikasi wajah
     const faceVerified = await verifyFace(
       photo_base64,
       employee.face_token,
@@ -112,7 +145,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Upload photo
+    // Upload foto
     const photoUrl = await uploadAttendancePhoto(
       supabase,
       photo_base64,
@@ -120,7 +153,7 @@ export async function POST(request: NextRequest) {
       "check_out",
     );
 
-    // Calculate early leave minutes (WIB)
+    // Hitung pulang lebih awal (WIB)
     const now = getNowWIB();
     const expectedCheckOut = parseWorkTime(settings.default_check_out);
 
@@ -131,7 +164,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Update attendance record
+    // Update record absensi
     const { data: updatedAttendance, error: updateError } = await supabase
       .from("attendances")
       .update({
@@ -142,7 +175,6 @@ export async function POST(request: NextRequest) {
         check_out_face_verified: faceVerified.verified,
         check_out_location_verified: locationVerified,
         early_leave_minutes: earlyLeaveMinutes,
-        // work_duration_minutes dihitung otomatis oleh database trigger
       })
       .eq("id", attendance.id)
       .select()
@@ -150,7 +182,7 @@ export async function POST(request: NextRequest) {
 
     if (updateError) throw updateError;
 
-    // Calculate work duration for response
+    // Hitung durasi kerja untuk response
     const checkInTime = new Date(attendance.check_in_time);
     const workDurationMinutes = Math.floor(
       (now.getTime() - checkInTime.getTime()) / 60000,

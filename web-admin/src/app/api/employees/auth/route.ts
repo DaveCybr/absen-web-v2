@@ -1,34 +1,32 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 
-// POST - Login employee (for mobile app)
+// POST - Login (untuk mobile app)
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
     const body = await request.json();
-    const { email, password } = body;
+    const { email, password, fcm_token } = body;
 
     if (!email || !password) {
       return NextResponse.json(
-        { error: "Email and password are required" },
-        { status: 400 }
+        { error: "Email dan password wajib diisi" },
+        { status: 400 },
       );
     }
 
-    // Sign in with Supabase Auth
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    // Sign in via Supabase Auth
+    const { data: authData, error: authError } =
+      await supabase.auth.signInWithPassword({ email, password });
 
     if (authError) {
       return NextResponse.json(
-        { error: "Invalid email or password" },
-        { status: 401 }
+        { error: "Email atau password salah" },
+        { status: 401 },
       );
     }
 
-    // Get employee data
+    // Ambil data karyawan
     const { data: employee, error: empError } = await supabase
       .from("employees")
       .select("*")
@@ -38,20 +36,30 @@ export async function POST(request: NextRequest) {
     if (empError || !employee) {
       await supabase.auth.signOut();
       return NextResponse.json(
-        { error: "Employee account not found" },
-        { status: 404 }
+        { error: "Akun karyawan tidak ditemukan" },
+        { status: 404 },
       );
     }
 
     if (!employee.is_active) {
       await supabase.auth.signOut();
       return NextResponse.json(
-        { error: "Your account has been deactivated" },
-        { status: 403 }
+        { error: "Akun Anda telah dinonaktifkan. Hubungi admin." },
+        { status: 403 },
       );
     }
 
-    // Get office settings
+    // ✅ Simpan FCM token jika dikirim saat login
+    if (fcm_token) {
+      await supabase
+        .from("employees")
+        .update({ fcm_token })
+        .eq("id", employee.id);
+
+      employee.fcm_token = fcm_token;
+    }
+
+    // Ambil pengaturan kantor
     const { data: settings } = await supabase
       .from("office_settings")
       .select("*")
@@ -60,8 +68,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
+        // ✅ Return session lengkap untuk mobile
+        session: {
+          access_token: authData.session!.access_token,
+          refresh_token: authData.session!.refresh_token,
+          expires_at: authData.session!.expires_at,
+          expires_in: authData.session!.expires_in,
+          token_type: "Bearer",
+        },
         user: authData.user,
-        session: authData.session,
         employee,
         office_settings: settings,
       },
@@ -70,27 +85,25 @@ export async function POST(request: NextRequest) {
     console.error("Employee login error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
-// GET - Get current employee (for mobile app)
+// GET - Get current employee via Bearer token (untuk mobile app)
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
 
-    // Get current user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
     if (userError || !user) {
-      return NextResponse.json(
-        { error: "Not authenticated" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
 
-    // Get employee data
     const { data: employee, error: empError } = await supabase
       .from("employees")
       .select("*")
@@ -100,11 +113,10 @@ export async function GET(request: NextRequest) {
     if (empError || !employee) {
       return NextResponse.json(
         { error: "Employee not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
-    // Get office settings
     const { data: settings } = await supabase
       .from("office_settings")
       .select("*")
@@ -122,7 +134,7 @@ export async function GET(request: NextRequest) {
     console.error("Get employee error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

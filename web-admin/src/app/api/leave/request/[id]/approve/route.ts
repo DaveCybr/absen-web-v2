@@ -2,27 +2,21 @@ import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 
 interface RouteParams {
-  params: Promise<{
-    id: string;
-  }>;
+  params: Promise<{ id: string }>;
 }
 
-// PUT - Approve leave request
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
     const supabase = await createClient();
     const { id } = await params;
 
-    // Get current user (admin)
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Get admin employee record
     const { data: adminEmployee } = await supabase
       .from("employees")
       .select("id, role")
@@ -32,11 +26,10 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     if (!adminEmployee || adminEmployee.role !== "admin") {
       return NextResponse.json(
         { error: "Only admins can approve leave requests" },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
-    // Get leave request
     const { data: leaveRequest, error: fetchError } = await supabase
       .from("leave_requests")
       .select("*")
@@ -46,18 +39,18 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     if (fetchError || !leaveRequest) {
       return NextResponse.json(
         { error: "Leave request not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     if (leaveRequest.status !== "pending") {
       return NextResponse.json(
         { error: "Can only approve pending requests" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    // Approve the request
+    // ✅ FIX: Gunakan FK hint eksplisit pada select setelah update
     const { data, error } = await supabase
       .from("leave_requests")
       .update({
@@ -66,23 +59,80 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         approved_at: new Date().toISOString(),
       })
       .eq("id", id)
-      .select("*, employee:employees(*), leave_type:leave_types(*)")
+      .select(
+        `
+        *,
+        employee:employees!leave_requests_employee_id_fkey(*),
+        leave_type:leave_types(*),
+        approver:employees!leave_requests_approved_by_fkey(id, name)
+      `,
+      )
       .single();
 
     if (error) throw error;
 
-    // Note: leave_balance is updated automatically by database trigger
+    // Update leave balance
+    await updateLeaveBalance(
+      supabase,
+      leaveRequest.employee_id,
+      leaveRequest.leave_type_id,
+      leaveRequest.total_days,
+      new Date(leaveRequest.start_date).getFullYear(),
+    );
 
     return NextResponse.json({
       success: true,
       data,
-      message: "Leave request approved",
+      message: "Pengajuan cuti berhasil disetujui",
     });
   } catch (error) {
     console.error("Approve leave request error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: 500 },
     );
+  }
+}
+
+async function updateLeaveBalance(
+  supabase: Awaited<
+    ReturnType<typeof import("@/lib/supabase/server").createClient>
+  >,
+  employeeId: string,
+  leaveTypeId: string,
+  totalDays: number,
+  year: number,
+) {
+  try {
+    const { data: balance } = await supabase
+      .from("leave_balances")
+      .select("id, used")
+      .eq("employee_id", employeeId)
+      .eq("leave_type_id", leaveTypeId)
+      .eq("year", year)
+      .single();
+
+    if (balance) {
+      await supabase
+        .from("leave_balances")
+        .update({ used: balance.used + totalDays })
+        .eq("id", balance.id);
+    } else {
+      const { data: leaveType } = await supabase
+        .from("leave_types")
+        .select("default_quota")
+        .eq("id", leaveTypeId)
+        .single();
+
+      await supabase.from("leave_balances").insert({
+        employee_id: employeeId,
+        leave_type_id: leaveTypeId,
+        year,
+        quota: leaveType?.default_quota || 0,
+        used: totalDays,
+      });
+    }
+  } catch (err) {
+    console.error("Failed to update leave balance:", err);
   }
 }

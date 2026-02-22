@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import { getTodayWIB } from "@/lib/attendance";
 
 export async function GET(request: NextRequest) {
   try {
@@ -10,11 +11,12 @@ export async function GET(request: NextRequest) {
     if (!employeeId) {
       return NextResponse.json(
         { error: "employee_id is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    const today = new Date().toISOString().split("T")[0];
+    // ✅ FIX: Gunakan getTodayWIB() agar konsisten dengan check-in/check-out
+    const today = getTodayWIB();
 
     const { data: attendance, error } = await supabase
       .from("attendances")
@@ -38,7 +40,7 @@ export async function GET(request: NextRequest) {
     console.error("Get today attendance error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

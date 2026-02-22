@@ -21,10 +21,19 @@ interface PageProps {
 
 async function getLeaveRequests(status?: string) {
   const supabase = await createClient();
-  
+
+  // ✅ FIX: Gunakan FK hint eksplisit untuk menghindari ambiguous relationship
+  // leave_requests punya 2 FK ke employees: employee_id dan approved_by
   let query = supabase
     .from("leave_requests")
-    .select("*, employee:employees(*), leave_type:leave_types(*)")
+    .select(
+      `
+      *,
+      employee:employees!leave_requests_employee_id_fkey(*),
+      leave_type:leave_types(*),
+      approver:employees!leave_requests_approved_by_fkey(id, name)
+    `,
+    )
     .order("created_at", { ascending: false });
 
   if (status && status !== "all") {
@@ -38,14 +47,19 @@ async function getLeaveRequests(status?: string) {
     return [];
   }
 
-  return data as (LeaveRequest & { employee: Employee; leave_type: LeaveType })[];
+  return data as (LeaveRequest & {
+    employee: Employee;
+    leave_type: LeaveType;
+  })[];
 }
 
 export default async function CutiPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const leaveRequests = await getLeaveRequests(params.status);
 
-  const pendingCount = leaveRequests.filter((r) => r.status === "pending").length;
+  const pendingCount = leaveRequests.filter(
+    (r) => r.status === "pending",
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -62,7 +76,9 @@ export default async function CutiPage({ searchParams }: PageProps) {
         <Card>
           <CardContent className="p-4">
             <p className="text-2xl font-bold text-yellow-600">{pendingCount}</p>
-            <p className="text-sm text-muted-foreground">Menunggu Persetujuan</p>
+            <p className="text-sm text-muted-foreground">
+              Menunggu Persetujuan
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -122,7 +138,9 @@ export default async function CutiPage({ searchParams }: PageProps) {
                           {request.employee?.name?.charAt(0).toUpperCase()}
                         </div>
                         <div>
-                          <p className="font-medium">{request.employee?.name}</p>
+                          <p className="font-medium">
+                            {request.employee?.name}
+                          </p>
                           <p className="text-xs text-muted-foreground">
                             {request.employee?.department || "—"}
                           </p>
@@ -130,21 +148,29 @@ export default async function CutiPage({ searchParams }: PageProps) {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline">{request.leave_type?.name}</Badge>
+                      <Badge variant="outline">
+                        {request.leave_type?.name}
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       <div className="text-sm">
-                        <p>{formatDate(request.start_date, { month: "short" })}</p>
+                        <p>
+                          {formatDate(request.start_date, { month: "short" })}
+                        </p>
                         {request.start_date !== request.end_date && (
                           <p className="text-muted-foreground">
-                            s/d {formatDate(request.end_date, { month: "short" })}
+                            s/d{" "}
+                            {formatDate(request.end_date, { month: "short" })}
                           </p>
                         )}
                       </div>
                     </TableCell>
                     <TableCell>{request.total_days} hari</TableCell>
                     <TableCell>
-                      <p className="max-w-[200px] truncate" title={request.reason || ""}>
+                      <p
+                        className="max-w-[200px] truncate"
+                        title={request.reason || ""}
+                      >
                         {request.reason || "—"}
                       </p>
                     </TableCell>

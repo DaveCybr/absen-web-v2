@@ -2,13 +2,16 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
 
+// Batas ukuran base64 foto: ~5MB
+const MAX_PHOTO_SIZE_BYTES = 5 * 1024 * 1024;
+
 // POST - Create new employee
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
     const adminSupabase = createAdminClient();
 
-    // Verify current user is admin
+    // Verifikasi user adalah admin
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -17,7 +20,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check if current user is admin (using admin client to bypass RLS)
     const { data: adminEmployee } = await adminSupabase
       .from("employees")
       .select("role")
@@ -34,7 +36,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { name, email, password, phone, department, position, role } = body;
 
-    // Validation
+    // Validasi
     if (!name || !email || !password) {
       return NextResponse.json(
         { error: "Nama, email, dan password wajib diisi" },
@@ -49,7 +51,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if email already exists
+    // Validasi format email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return NextResponse.json(
+        { error: "Format email tidak valid" },
+        { status: 400 },
+      );
+    }
+
+    // Cek email sudah ada
     const { data: existingEmployee } = await adminSupabase
       .from("employees")
       .select("id")
@@ -63,7 +74,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create auth user using admin client
+    // Buat auth user
     const { data: authData, error: authError } =
       await adminSupabase.auth.admin.createUser({
         email,
@@ -72,7 +83,6 @@ export async function POST(request: NextRequest) {
       });
 
     if (authError) {
-      console.error("Auth error:", authError);
       if (authError.message.includes("already")) {
         return NextResponse.json(
           { error: "Email sudah terdaftar" },
@@ -86,7 +96,7 @@ export async function POST(request: NextRequest) {
       throw new Error("Failed to create user");
     }
 
-    // Create employee record
+    // Buat employee record
     const { data: employee, error: empError } = await adminSupabase
       .from("employees")
       .insert({
@@ -103,11 +113,13 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (empError) {
-      console.error("Employee insert error:", empError);
-      // Rollback - delete auth user
+      // Rollback - hapus auth user
       await adminSupabase.auth.admin.deleteUser(authData.user.id);
       throw empError;
     }
+
+    // ✅ FIX: Inisialisasi leave balances untuk karyawan baru
+    await initLeaveBalances(adminSupabase, employee.id);
 
     return NextResponse.json({
       success: true,
@@ -125,12 +137,51 @@ export async function POST(request: NextRequest) {
   }
 }
 
+/**
+ * Inisialisasi leave balances untuk karyawan baru
+ * berdasarkan semua leave types yang aktif
+ */
+async function initLeaveBalances(
+  adminSupabase: ReturnType<typeof createAdminClient>,
+  employeeId: string,
+) {
+  try {
+    const currentYear = new Date().getFullYear();
+
+    // Ambil semua leave types aktif
+    const { data: leaveTypes, error } = await adminSupabase
+      .from("leave_types")
+      .select("id, default_quota")
+      .eq("is_active", true);
+
+    if (error || !leaveTypes?.length) return;
+
+    // Buat balance records
+    const balances = leaveTypes.map((lt) => ({
+      employee_id: employeeId,
+      leave_type_id: lt.id,
+      year: currentYear,
+      quota: lt.default_quota,
+      used: 0,
+    }));
+
+    const { error: insertError } = await adminSupabase
+      .from("leave_balances")
+      .insert(balances);
+
+    if (insertError) {
+      console.error("Failed to init leave balances:", insertError);
+    }
+  } catch (err) {
+    console.error("initLeaveBalances error:", err);
+  }
+}
+
 // GET - List all employees
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
 
-    // Verify user is authenticated
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -139,26 +190,36 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Use admin client to bypass RLS
     const adminSupabase = createAdminClient();
-
     const { searchParams } = new URL(request.url);
     const activeOnly = searchParams.get("active") === "true";
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = parseInt(searchParams.get("limit") || "100");
+    const offset = (page - 1) * limit;
 
     let query = adminSupabase
       .from("employees")
-      .select("*")
-      .order("created_at", { ascending: false });
+      .select("*", { count: "exact" })
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
 
     if (activeOnly) {
       query = query.eq("is_active", true);
     }
 
-    const { data, error } = await query;
+    const { data, error, count } = await query;
 
     if (error) throw error;
 
-    return NextResponse.json({ success: true, data });
+    return NextResponse.json({
+      success: true,
+      data,
+      pagination: {
+        total: count || 0,
+        page,
+        limit,
+      },
+    });
   } catch (error) {
     console.error("Get employees error:", error);
     return NextResponse.json(

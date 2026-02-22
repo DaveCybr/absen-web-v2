@@ -16,12 +16,16 @@ interface CheckInRequest {
   photo_base64: string;
 }
 
+// ✅ Batas ukuran foto base64: ~5MB
+const MAX_PHOTO_BASE64_LENGTH = 7 * 1024 * 1024; // 7MB string ≈ ~5MB file
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
     const body: CheckInRequest = await request.json();
     const { employee_id, latitude, longitude, photo_base64 } = body;
 
+    // Validasi field wajib
     if (!employee_id || !latitude || !longitude || !photo_base64) {
       return NextResponse.json(
         { error: "Missing required fields" },
@@ -29,7 +33,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get employee data
+    // ✅ FIX: Validasi ukuran foto
+    if (photo_base64.length > MAX_PHOTO_BASE64_LENGTH) {
+      return NextResponse.json(
+        { error: "Ukuran foto terlalu besar. Maksimal 5MB." },
+        { status: 400 },
+      );
+    }
+
+    // Validasi format base64
+    if (!photo_base64.startsWith("data:image/")) {
+      return NextResponse.json(
+        { error: "Format foto tidak valid" },
+        { status: 400 },
+      );
+    }
+
+    // Validasi koordinat
+    if (
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      return NextResponse.json(
+        { error: "Koordinat GPS tidak valid" },
+        { status: 400 },
+      );
+    }
+
+    // Ambil data karyawan
     const { data: employee, error: empError } = await supabase
       .from("employees")
       .select("*")
@@ -43,6 +76,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!employee.is_active) {
+      return NextResponse.json(
+        { error: "Akun Anda sudah dinonaktifkan" },
+        { status: 403 },
+      );
+    }
+
     if (!employee.face_token) {
       return NextResponse.json(
         {
@@ -53,7 +93,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get office settings
+    // Ambil pengaturan kantor
     const { data: settings, error: settingsError } = await supabase
       .from("office_settings")
       .select("*")
@@ -66,7 +106,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check already checked in today (WIB timezone)
+    // ✅ FIX: Cek sudah check-in hari ini menggunakan WIB
     const today = getTodayWIB();
     const { data: existingAttendance } = await supabase
       .from("attendances")
@@ -82,7 +122,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate GPS location
+    // Validasi lokasi GPS
     const distance = calculateDistance(
       latitude,
       longitude,
@@ -91,7 +131,7 @@ export async function POST(request: NextRequest) {
     );
     const locationVerified = distance <= settings.radius_meters;
 
-    // Verify face
+    // Verifikasi wajah
     const faceVerified = await verifyFace(
       photo_base64,
       employee.face_token,
@@ -105,7 +145,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Upload photo
+    // Upload foto
     const photoUrl = await uploadAttendancePhoto(
       supabase,
       photo_base64,
@@ -113,7 +153,7 @@ export async function POST(request: NextRequest) {
       "check_in",
     );
 
-    // Calculate late minutes (WIB)
+    // Hitung keterlambatan (WIB)
     const now = getNowWIB();
     const expectedCheckIn = parseWorkTime(settings.default_check_in);
     expectedCheckIn.setMinutes(
@@ -130,7 +170,7 @@ export async function POST(request: NextRequest) {
       status = "late";
     }
 
-    // Create or update attendance record
+    // Buat atau update record absensi
     const attendanceData = {
       employee_id,
       attendance_date: today,
