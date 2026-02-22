@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
+    const adminSupabase = createAdminClient();
 
     // Verify current user is admin
     const {
@@ -15,11 +16,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { data: adminEmployee } = await supabase
+    // Pakai adminSupabase untuk query employees (bypass RLS)
+    const { data: adminEmployee } = await adminSupabase
       .from("employees")
       .select("role")
       .eq("user_id", user.id)
       .single();
+
+    console.log("Admin employee data:", adminEmployee);
 
     if (!adminEmployee || adminEmployee.role !== "admin") {
       return NextResponse.json(
@@ -45,14 +49,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Use admin client to create user (server-side only)
-    const adminSupabase = createAdminClient();
-
+    // Create auth user
     const { data: authData, error: authError } =
       await adminSupabase.auth.admin.createUser({
         email,
         password,
-        email_confirm: true, // Auto-confirm email
+        email_confirm: true,
       });
 
     if (authError) {
@@ -72,7 +74,7 @@ export async function POST(request: NextRequest) {
       throw new Error("Failed to create user");
     }
 
-    // Create employee record
+    // Insert employee pakai adminSupabase (bypass RLS)
     const { data: employee, error: empError } = await adminSupabase
       .from("employees")
       .insert({
@@ -89,7 +91,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (empError) {
-      // Rollback: delete auth user if employee creation fails
+      // Rollback
       await adminSupabase.auth.admin.deleteUser(authData.user.id);
       throw empError;
     }
@@ -113,7 +115,6 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   try {
     const supabase = await createClient();
-
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -122,7 +123,8 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { data, error } = await supabase
+    const adminSupabase = createAdminClient();
+    const { data, error } = await adminSupabase
       .from("employees")
       .select("*")
       .order("created_at", { ascending: false });
@@ -131,7 +133,7 @@ export async function GET() {
 
     return NextResponse.json({ success: true, data });
   } catch (error) {
-    console.error("Create employee error:", error);
+    console.error("Get employees error:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Internal server error",
