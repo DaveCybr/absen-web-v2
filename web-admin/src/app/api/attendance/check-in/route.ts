@@ -1,5 +1,13 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  getTodayWIB,
+  getNowWIB,
+  parseWorkTime,
+  calculateDistance,
+  verifyFace,
+  uploadAttendancePhoto,
+} from "@/lib/attendance";
 
 interface CheckInRequest {
   employee_id: string;
@@ -12,14 +20,12 @@ export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
     const body: CheckInRequest = await request.json();
-
     const { employee_id, latitude, longitude, photo_base64 } = body;
 
-    // Validate required fields
     if (!employee_id || !latitude || !longitude || !photo_base64) {
       return NextResponse.json(
         { error: "Missing required fields" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -33,14 +39,17 @@ export async function POST(request: NextRequest) {
     if (empError || !employee) {
       return NextResponse.json(
         { error: "Employee not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     if (!employee.face_token) {
       return NextResponse.json(
-        { error: "Face not registered. Please register your face first." },
-        { status: 400 }
+        {
+          error:
+            "Wajah belum terdaftar. Silakan daftarkan wajah terlebih dahulu.",
+        },
+        { status: 400 },
       );
     }
 
@@ -52,36 +61,13 @@ export async function POST(request: NextRequest) {
 
     if (settingsError || !settings) {
       return NextResponse.json(
-        { error: "Office settings not configured" },
-        { status: 500 }
+        { error: "Pengaturan kantor belum dikonfigurasi" },
+        { status: 500 },
       );
     }
 
-    // Validate GPS location
-    const distance = calculateDistance(
-      latitude,
-      longitude,
-      settings.latitude,
-      settings.longitude
-    );
-
-    const locationVerified = distance <= settings.radius_meters;
-
-    // Verify face using Face++ API
-    const faceVerified = await verifyFace(photo_base64, employee.face_token, settings.face_similarity_threshold);
-
-    if (!faceVerified.success) {
-      return NextResponse.json(
-        { error: faceVerified.message || "Face verification failed" },
-        { status: 400 }
-      );
-    }
-
-    // Upload photo to storage
-    const photoUrl = await uploadPhoto(supabase, photo_base64, employee_id, "check_in");
-
-    // Check for existing attendance today
-    const today = new Date().toISOString().split("T")[0];
+    // Check already checked in today (WIB timezone)
+    const today = getTodayWIB();
     const { data: existingAttendance } = await supabase
       .from("attendances")
       .select("*")
@@ -91,26 +77,56 @@ export async function POST(request: NextRequest) {
 
     if (existingAttendance?.check_in_time) {
       return NextResponse.json(
-        { error: "Already checked in today" },
-        { status: 400 }
+        { error: "Anda sudah melakukan check-in hari ini" },
+        { status: 400 },
       );
     }
 
-    // Calculate late minutes
-    const now = new Date();
-    const checkInTime = settings.default_check_in; // "08:00:00"
-    const [hours, minutes] = checkInTime.split(":").map(Number);
-    const expectedCheckIn = new Date(now);
-    expectedCheckIn.setHours(hours, minutes, 0, 0);
-    
-    // Add late tolerance
-    expectedCheckIn.setMinutes(expectedCheckIn.getMinutes() + settings.late_tolerance_minutes);
+    // Validate GPS location
+    const distance = calculateDistance(
+      latitude,
+      longitude,
+      settings.latitude,
+      settings.longitude,
+    );
+    const locationVerified = distance <= settings.radius_meters;
+
+    // Verify face
+    const faceVerified = await verifyFace(
+      photo_base64,
+      employee.face_token,
+      settings.face_similarity_threshold,
+    );
+
+    if (!faceVerified.success) {
+      return NextResponse.json(
+        { error: faceVerified.message || "Verifikasi wajah gagal" },
+        { status: 400 },
+      );
+    }
+
+    // Upload photo
+    const photoUrl = await uploadAttendancePhoto(
+      supabase,
+      photo_base64,
+      employee_id,
+      "check_in",
+    );
+
+    // Calculate late minutes (WIB)
+    const now = getNowWIB();
+    const expectedCheckIn = parseWorkTime(settings.default_check_in);
+    expectedCheckIn.setMinutes(
+      expectedCheckIn.getMinutes() + settings.late_tolerance_minutes,
+    );
 
     let lateMinutes = 0;
     let status: "present" | "late" = "present";
 
     if (now > expectedCheckIn) {
-      lateMinutes = Math.floor((now.getTime() - expectedCheckIn.getTime()) / 60000);
+      lateMinutes = Math.floor(
+        (now.getTime() - expectedCheckIn.getTime()) / 60000,
+      );
       status = "late";
     }
 
@@ -118,7 +134,7 @@ export async function POST(request: NextRequest) {
     const attendanceData = {
       employee_id,
       attendance_date: today,
-      check_in_time: now.toISOString(),
+      check_in_time: new Date().toISOString(),
       check_in_latitude: latitude,
       check_in_longitude: longitude,
       check_in_photo_url: photoUrl,
@@ -130,24 +146,20 @@ export async function POST(request: NextRequest) {
 
     let attendance;
     if (existingAttendance) {
-      // Update existing (e.g., was marked as leave but now checking in)
       const { data, error } = await supabase
         .from("attendances")
         .update(attendanceData)
         .eq("id", existingAttendance.id)
         .select()
         .single();
-
       if (error) throw error;
       attendance = data;
     } else {
-      // Create new
       const { data, error } = await supabase
         .from("attendances")
         .insert(attendanceData)
         .select()
         .single();
-
       if (error) throw error;
       attendance = data;
     }
@@ -155,9 +167,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       data: attendance,
-      message: status === "late" 
-        ? `Check-in berhasil. Anda terlambat ${lateMinutes} menit.`
-        : "Check-in berhasil. Selamat bekerja!",
+      message:
+        status === "late"
+          ? `Check-in berhasil. Anda terlambat ${lateMinutes} menit.`
+          : "Check-in berhasil. Selamat bekerja!",
       warnings: {
         face_verified: faceVerified.verified,
         location_verified: locationVerified,
@@ -168,104 +181,7 @@ export async function POST(request: NextRequest) {
     console.error("Check-in error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: 500 },
     );
-  }
-}
-
-// Calculate distance between two coordinates using Haversine formula
-function calculateDistance(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number
-): number {
-  const R = 6371e3; // Earth's radius in meters
-  const φ1 = (lat1 * Math.PI) / 180;
-  const φ2 = (lat2 * Math.PI) / 180;
-  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
-  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
-
-  const a =
-    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-  return R * c;
-}
-
-// Verify face using Face++ API
-async function verifyFace(
-  photoBase64: string,
-  faceToken: string,
-  threshold: number
-): Promise<{ success: boolean; verified: boolean; confidence?: number; message?: string }> {
-  try {
-    const formData = new FormData();
-    formData.append("api_key", process.env.FACEPP_API_KEY!);
-    formData.append("api_secret", process.env.FACEPP_API_SECRET!);
-    formData.append("face_token1", faceToken);
-    formData.append("image_base64_2", photoBase64.replace(/^data:image\/\w+;base64,/, ""));
-
-    const response = await fetch("https://api-us.faceplusplus.com/facepp/v3/compare", {
-      method: "POST",
-      body: formData,
-    });
-
-    const result = await response.json();
-
-    if (result.error_message) {
-      return { success: false, verified: false, message: result.error_message };
-    }
-
-    const confidence = result.confidence / 100; // Convert to 0-1 scale
-    const verified = confidence >= threshold;
-
-    return {
-      success: true,
-      verified,
-      confidence,
-      message: verified ? "Face verified" : "Face does not match",
-    };
-  } catch (error) {
-    console.error("Face++ API error:", error);
-    return { success: false, verified: false, message: "Face verification service unavailable" };
-  }
-}
-
-// Upload photo to Supabase storage
-async function uploadPhoto(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  base64: string,
-  employeeId: string,
-  type: "check_in" | "check_out"
-): Promise<string | null> {
-  try {
-    // Remove base64 prefix
-    const base64Data = base64.replace(/^data:image\/\w+;base64,/, "");
-    const buffer = Buffer.from(base64Data, "base64");
-
-    const fileName = `${employeeId}/${type}_${Date.now()}.jpg`;
-
-    const { error } = await supabase.storage
-      .from("attendance-photos")
-      .upload(fileName, buffer, {
-        contentType: "image/jpeg",
-        upsert: false,
-      });
-
-    if (error) {
-      console.error("Upload error:", error);
-      return null;
-    }
-
-    const { data: urlData } = supabase.storage
-      .from("attendance-photos")
-      .getPublicUrl(fileName);
-
-    return urlData.publicUrl;
-  } catch (error) {
-    console.error("Upload photo error:", error);
-    return null;
   }
 }

@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +10,6 @@ import { Plus, X } from "lucide-react";
 
 export function AddEmployeeButton() {
   const router = useRouter();
-  const supabase = createClient();
 
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -33,47 +31,18 @@ export function AddEmployeeButton() {
     setError("");
 
     try {
-      // 1. Create auth user
-      const { data: authData, error: authError } =
-        await supabase.auth.admin.createUser({
-          email: formData.email,
-          password: formData.password,
-          email_confirm: true,
-        });
-
-      // If admin API not available, use signUp (user will need to verify email)
-      let userId: string;
-
-      if (authError) {
-        // Fallback: use regular signup
-        const { data: signUpData, error: signUpError } =
-          await supabase.auth.signUp({
-            email: formData.email,
-            password: formData.password,
-          });
-
-        if (signUpError) throw signUpError;
-        if (!signUpData.user) throw new Error("Gagal membuat akun");
-
-        userId = signUpData.user.id;
-      } else {
-        if (!authData.user) throw new Error("Gagal membuat akun");
-        userId = authData.user.id;
-      }
-
-      // 2. Create employee record
-      const { error: empError } = await supabase.from("employees").insert({
-        user_id: userId,
-        name: formData.name,
-        email: formData.email,
-        phone: formData.phone || null,
-        department: formData.department || null,
-        position: formData.position || null,
-        role: formData.role,
-        is_active: true,
+      // Panggil API route server-side (aman, tidak expose service role key ke browser)
+      const response = await fetch("/api/employees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData),
       });
 
-      if (empError) throw empError;
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Terjadi kesalahan");
+      }
 
       setOpen(false);
       setFormData({
@@ -87,7 +56,17 @@ export function AddEmployeeButton() {
       });
       router.refresh();
     } catch (err) {
-      console.log("Error adding employee:", err);
+      console.error("Error creating employee:", err);
+      // Tambah di baris pertama fungsi POST, sebelum try
+      console.log("ENV CHECK:", {
+        url: process.env.NEXT_PUBLIC_SUPABASE_URL ? "✅ ada" : "❌ tidak ada",
+        anon: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+          ? "✅ ada"
+          : "❌ tidak ada",
+        service: process.env.SUPABASE_SERVICE_ROLE_KEY
+          ? "✅ ada"
+          : "❌ tidak ada",
+      });
       setError(err instanceof Error ? err.message : "Terjadi kesalahan");
     } finally {
       setLoading(false);
