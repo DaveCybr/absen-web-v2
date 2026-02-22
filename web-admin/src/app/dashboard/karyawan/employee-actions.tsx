@@ -1,0 +1,300 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
+import { MoreHorizontal, Pencil, Trash2, X } from "lucide-react";
+import type { Employee } from "@/types";
+
+interface EmployeeActionsProps {
+  employee: Employee;
+}
+
+export function EmployeeActions({ employee }: EmployeeActionsProps) {
+  const router = useRouter();
+  const supabase = createClient();
+
+  const [showMenu, setShowMenu] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const [formData, setFormData] = useState({
+    name: employee.name,
+    email: employee.email,
+    phone: employee.phone || "",
+    department: employee.department || "",
+    position: employee.position || "",
+    role: employee.role,
+    is_active: employee.is_active,
+  });
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+
+    try {
+      const { error: updateError } = await supabase
+        .from("employees")
+        .update({
+          name: formData.name,
+          phone: formData.phone || null,
+          department: formData.department || null,
+          position: formData.position || null,
+          role: formData.role,
+          is_active: formData.is_active,
+        })
+        .eq("id", employee.id);
+
+      if (updateError) throw updateError;
+
+      setShowEdit(false);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Terjadi kesalahan");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const { error: deleteError } = await supabase
+        .from("employees")
+        .delete()
+        .eq("id", employee.id);
+
+      if (deleteError) throw deleteError;
+
+      setShowDelete(false);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Terjadi kesalahan");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      {/* Action Menu */}
+      <div className="relative">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setShowMenu(!showMenu)}
+        >
+          <MoreHorizontal className="h-4 w-4" />
+        </Button>
+
+        {showMenu && (
+          <>
+            <div
+              className="fixed inset-0 z-10"
+              onClick={() => setShowMenu(false)}
+            />
+            <div className="absolute right-0 z-20 mt-1 w-36 rounded-md border bg-white py-1 shadow-lg">
+              <button
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-gray-100"
+                onClick={() => {
+                  setShowMenu(false);
+                  setShowEdit(true);
+                }}
+              >
+                <Pencil className="h-4 w-4" />
+                Edit
+              </button>
+              <button
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-gray-100"
+                onClick={() => {
+                  setShowMenu(false);
+                  setShowDelete(true);
+                }}
+              >
+                <Trash2 className="h-4 w-4" />
+                Hapus
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Edit Modal */}
+      {showEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Edit Karyawan</h2>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowEdit(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <form onSubmit={handleUpdate} className="space-y-4">
+              {error && (
+                <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+                  {error}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-name" required>
+                  Nama Lengkap
+                </Label>
+                <Input
+                  id="edit-name"
+                  value={formData.name}
+                  onChange={(e) =>
+                    setFormData({ ...formData, name: e.target.value })
+                  }
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-email">Email</Label>
+                <Input id="edit-email" value={formData.email} disabled />
+                <p className="text-xs text-muted-foreground">
+                  Email tidak dapat diubah
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-department">Departemen</Label>
+                  <Input
+                    id="edit-department"
+                    value={formData.department}
+                    onChange={(e) =>
+                      setFormData({ ...formData, department: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-position">Jabatan</Label>
+                  <Input
+                    id="edit-position"
+                    value={formData.position}
+                    onChange={(e) =>
+                      setFormData({ ...formData, position: e.target.value })
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-phone">No. Telepon</Label>
+                <Input
+                  id="edit-phone"
+                  value={formData.phone}
+                  onChange={(e) =>
+                    setFormData({ ...formData, phone: e.target.value })
+                  }
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-role">Role</Label>
+                  <Select
+                    id="edit-role"
+                    value={formData.role}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        role: e.target.value as "admin" | "employee",
+                      })
+                    }
+                  >
+                    <option value="employee">Karyawan</option>
+                    <option value="admin">Admin</option>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-status">Status</Label>
+                  <Select
+                    id="edit-status"
+                    value={formData.is_active ? "active" : "inactive"}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        is_active: e.target.value === "active",
+                      })
+                    }
+                  >
+                    <option value="active">Aktif</option>
+                    <option value="inactive">Nonaktif</option>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setShowEdit(false)}
+                >
+                  Batal
+                </Button>
+                <Button type="submit" className="flex-1" loading={loading}>
+                  Simpan
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation */}
+      {showDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-lg bg-white p-6 shadow-xl">
+            <h2 className="text-lg font-semibold">Hapus Karyawan</h2>
+            <p className="mt-2 text-muted-foreground">
+              Apakah Anda yakin ingin menghapus <strong>{employee.name}</strong>?
+              Tindakan ini tidak dapat dibatalkan.
+            </p>
+
+            {error && (
+              <div className="mt-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+                {error}
+              </div>
+            )}
+
+            <div className="mt-6 flex gap-3">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setShowDelete(false)}
+              >
+                Batal
+              </Button>
+              <Button
+                variant="destructive"
+                className="flex-1"
+                onClick={handleDelete}
+                loading={loading}
+              >
+                Hapus
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
