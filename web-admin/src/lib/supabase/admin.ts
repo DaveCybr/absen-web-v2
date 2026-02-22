@@ -9,9 +9,21 @@ export function createAdminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!supabaseUrl || !serviceRoleKey) {
+  // Debug logging (hapus setelah fix)
+  console.log("Admin client init:", {
+    url: supabaseUrl ? "✅" : "❌ MISSING",
+    serviceKey: serviceRoleKey
+      ? `✅ (${serviceRoleKey.substring(0, 20)}...)`
+      : "❌ MISSING",
+  });
+
+  if (!supabaseUrl) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
+  }
+
+  if (!serviceRoleKey) {
     throw new Error(
-      "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY",
+      "Missing SUPABASE_SERVICE_ROLE_KEY - pastikan ada di .env.local",
     );
   }
 

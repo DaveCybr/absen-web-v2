@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
 
+// POST - Create new employee
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -16,14 +17,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Pakai adminSupabase untuk query employees (bypass RLS)
+    // Check if current user is admin (using admin client to bypass RLS)
     const { data: adminEmployee } = await adminSupabase
       .from("employees")
       .select("role")
       .eq("user_id", user.id)
       .single();
-
-    console.log("Admin employee data:", adminEmployee);
 
     if (!adminEmployee || adminEmployee.role !== "admin") {
       return NextResponse.json(
@@ -35,21 +34,36 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { name, email, password, phone, department, position, role } = body;
 
+    // Validation
     if (!name || !email || !password) {
       return NextResponse.json(
-        { error: "Name, email, and password are required" },
+        { error: "Nama, email, dan password wajib diisi" },
         { status: 400 },
       );
     }
 
     if (password.length < 6) {
       return NextResponse.json(
-        { error: "Password must be at least 6 characters" },
+        { error: "Password minimal 6 karakter" },
         { status: 400 },
       );
     }
 
-    // Create auth user
+    // Check if email already exists
+    const { data: existingEmployee } = await adminSupabase
+      .from("employees")
+      .select("id")
+      .eq("email", email)
+      .single();
+
+    if (existingEmployee) {
+      return NextResponse.json(
+        { error: "Email sudah terdaftar" },
+        { status: 400 },
+      );
+    }
+
+    // Create auth user using admin client
     const { data: authData, error: authError } =
       await adminSupabase.auth.admin.createUser({
         email,
@@ -58,10 +72,8 @@ export async function POST(request: NextRequest) {
       });
 
     if (authError) {
-      if (
-        authError.message.includes("already registered") ||
-        authError.message.includes("already been registered")
-      ) {
+      console.error("Auth error:", authError);
+      if (authError.message.includes("already")) {
         return NextResponse.json(
           { error: "Email sudah terdaftar" },
           { status: 400 },
@@ -74,7 +86,7 @@ export async function POST(request: NextRequest) {
       throw new Error("Failed to create user");
     }
 
-    // Insert employee pakai adminSupabase (bypass RLS)
+    // Create employee record
     const { data: employee, error: empError } = await adminSupabase
       .from("employees")
       .insert({
@@ -91,7 +103,8 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (empError) {
-      // Rollback
+      console.error("Employee insert error:", empError);
+      // Rollback - delete auth user
       await adminSupabase.auth.admin.deleteUser(authData.user.id);
       throw empError;
     }
@@ -112,9 +125,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function GET() {
+// GET - List all employees
+export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
+
+    // Verify user is authenticated
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -123,11 +139,22 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // Use admin client to bypass RLS
     const adminSupabase = createAdminClient();
-    const { data, error } = await adminSupabase
+
+    const { searchParams } = new URL(request.url);
+    const activeOnly = searchParams.get("active") === "true";
+
+    let query = adminSupabase
       .from("employees")
       .select("*")
       .order("created_at", { ascending: false });
+
+    if (activeOnly) {
+      query = query.eq("is_active", true);
+    }
+
+    const { data, error } = await query;
 
     if (error) throw error;
 
