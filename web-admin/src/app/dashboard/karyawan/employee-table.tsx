@@ -342,7 +342,7 @@ export function EmployeeTable({ employees }: EmployeeTableProps) {
                 <th>Role</th>
                 <th>Wajah</th>
                 <th>Status</th>
-                <th style={{ textAlign: "right" }}>Aksi</th>
+                <th>Aksi</th>
               </tr>
             </thead>
             <tbody>

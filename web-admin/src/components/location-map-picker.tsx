@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, createPortal } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   MapPin,
   ZoomIn,
@@ -562,7 +563,7 @@ export function LocationMapPicker({
     refProp,
     fsStyle,
   }: {
-    refProp: React.RefObject<HTMLDivElement>;
+    refProp: React.RefObject<HTMLDivElement | null>;
     fsStyle?: boolean;
   }) => (
     <div ref={refProp} className={`lmp-search-wrap ${fsStyle ? "fs" : ""}`}>
