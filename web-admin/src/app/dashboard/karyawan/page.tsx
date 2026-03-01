@@ -4,6 +4,7 @@ import { EmployeeTable } from "./employee-table";
 import type { Employee } from "@/types";
 import { Users, UserCheck, UserX, Fingerprint, Shield } from "lucide-react";
 
+// karyawan/page.tsx - tambah sementara
 async function getEmployees(): Promise<Employee[]> {
   try {
     const supabase = createAdminClient();
@@ -11,9 +12,14 @@ async function getEmployees(): Promise<Employee[]> {
       .from("employees")
       .select("*")
       .order("created_at", { ascending: false });
-    if (error) return [];
+
+    if (error) {
+      console.error("getEmployees error:", error); // ← tambah ini
+      return [];
+    }
     return (data || []) as Employee[];
-  } catch {
+  } catch (e) {
+    console.error("getEmployees exception:", e); // ← dan ini
     return [];
   }
 }
