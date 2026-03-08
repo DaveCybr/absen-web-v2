@@ -163,7 +163,7 @@ export async function sendToMultipleDevices(
 // =====================================================
 
 /**
- * Notifikasi: Cuti disetujui
+ * Notifikasi: Izin disetujui
  */
 export function buildLeaveApprovedNotification(params: {
   employeeName: string;
@@ -179,8 +179,8 @@ export function buildLeaveApprovedNotification(params: {
       : `${params.startDate} - ${params.endDate}`;
 
   return {
-    title: "✅ Pengajuan Cuti Disetujui",
-    body: `Cuti ${params.leaveTypeName} kamu (${dateRange}, ${params.totalDays} hari) telah disetujui.`,
+    title: "✅ Pengajuan izin Disetujui",
+    body: `Izin ${params.leaveTypeName} kamu (${dateRange}, ${params.totalDays} hari) telah disetujui.`,
     data: {
       type: "LEAVE_APPROVED",
       leave_request_id: params.leaveRequestId,
@@ -190,7 +190,7 @@ export function buildLeaveApprovedNotification(params: {
 }
 
 /**
- * Notifikasi: Cuti ditolak
+ * Notifikasi: Izin ditolak
  */
 export function buildLeaveRejectedNotification(params: {
   leaveTypeName: string;
@@ -206,10 +206,10 @@ export function buildLeaveRejectedNotification(params: {
       : `${params.startDate} - ${params.endDate}`;
 
   return {
-    title: "❌ Pengajuan Cuti Ditolak",
+    title: "❌ Pengajuan Izin Ditolak",
     body: params.rejectionReason
-      ? `Cuti ${params.leaveTypeName} (${dateRange}) ditolak. Alasan: ${params.rejectionReason}`
-      : `Cuti ${params.leaveTypeName} (${dateRange}) ditolak oleh admin.`,
+      ? `Izin ${params.leaveTypeName} (${dateRange}) ditolak. Alasan: ${params.rejectionReason}`
+      : `Izin ${params.leaveTypeName} (${dateRange}) ditolak oleh admin.`,
     data: {
       type: "LEAVE_REJECTED",
       leave_request_id: params.leaveRequestId,
@@ -219,7 +219,7 @@ export function buildLeaveRejectedNotification(params: {
 }
 
 /**
- * Notifikasi: Ada pengajuan cuti baru (ke admin)
+ * Notifikasi: Ada pengajuan izin baru (ke admin)
  */
 export function buildNewLeaveRequestNotification(params: {
   employeeName: string;
@@ -235,7 +235,7 @@ export function buildNewLeaveRequestNotification(params: {
       : `${params.startDate} - ${params.endDate}`;
 
   return {
-    title: "📋 Pengajuan Cuti Baru",
+    title: "📋 Pengajuan Izin Baru",
     body: `${params.employeeName} mengajukan ${params.leaveTypeName} (${dateRange}, ${params.totalDays} hari). Silakan review.`,
     data: {
       type: "NEW_LEAVE_REQUEST",

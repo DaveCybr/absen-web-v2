@@ -7,8 +7,37 @@ import {
 } from "@/lib/fcm";
 import { cleanupInvalidTokens } from "@/lib/fcm-cleanup";
 import { formatDate } from "@/lib/utils";
+import { LEAVE_TYPES, type LeaveTypeCode } from "@/lib/leave-types";
 
-// GET - List leave requests
+// =====================================================
+// KONSTANTA
+// =====================================================
+
+/**
+ * Jenis izin yang tersedia (fixed — tidak dari DB)
+ * code digunakan sebagai identifier unik
+ */
+
+/** Maksimum hari kerja per pengajuan izin */
+const MAX_WORKDAYS = 3;
+
+/** Maksimum panjang alasan */
+const MAX_REASON_LENGTH = 500;
+
+/** Konfigurasi attachment */
+const ATTACHMENT_BUCKET = "leave-attachments";
+const ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+const ATTACHMENT_ALLOWED_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "application/pdf",
+];
+
+// =====================================================
+// GET — List pengajuan izin
+// =====================================================
+
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -21,7 +50,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Ambil employee yang login untuk filter berdasarkan role
     const { data: currentEmployee } = await supabase
       .from("employees")
       .select("id, role")
@@ -47,7 +75,6 @@ export async function GET(request: NextRequest) {
         `
         *,
         employee:employees!leave_requests_employee_id_fkey(*),
-        leave_type:leave_types(*),
         approver:employees!leave_requests_approved_by_fkey(id, name)
       `,
         { count: "exact" },
@@ -55,12 +82,10 @@ export async function GET(request: NextRequest) {
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
-    // ✅ FIX [C3]: Employee hanya bisa lihat request miliknya sendiri
-    // Admin bisa lihat semua
+    // Employee hanya bisa lihat miliknya, admin bisa lihat semua
     if (currentEmployee.role !== "admin") {
       query = query.eq("employee_id", currentEmployee.id);
     } else {
-      // Admin bisa filter by employee_id tertentu jika perlu
       const employeeId = searchParams.get("employee_id");
       if (employeeId) {
         query = query.eq("employee_id", employeeId);
@@ -93,12 +118,15 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Create leave request
+// =====================================================
+// POST — Buat pengajuan izin baru
+// =====================================================
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
 
-    // ✅ FIX [C3]: Ambil employee_id dari session, bukan dari body
+    // Ambil employee dari session
     const {
       data: { user },
       error: authError,
@@ -128,16 +156,37 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
-    const { leave_type_id, start_date, end_date, reason } = body;
+    // ── Parse FormData (support file upload) ─────────
+    // Content-Type: multipart/form-data
+    const formData = await request.formData();
+    const leave_type_code = formData.get("leave_type_code") as string | null;
+    const start_date = formData.get("start_date") as string | null;
+    const end_date = formData.get("end_date") as string | null;
+    const reason = formData.get("reason") as string | null;
+    const attachmentFile = formData.get("attachment") as File | null;
 
-    if (!leave_type_id || !start_date || !end_date) {
+    // ── Validasi field wajib ──────────────────────────
+    if (!leave_type_code || !start_date || !end_date) {
       return NextResponse.json(
-        { error: "Missing required fields" },
+        { error: "Jenis izin, tanggal mulai, dan tanggal selesai wajib diisi" },
         { status: 400 },
       );
     }
 
+    // ── Validasi jenis izin ───────────────────────────
+    const validCodes = LEAVE_TYPES.map((t) => t.code);
+    if (!validCodes.includes(leave_type_code as LeaveTypeCode)) {
+      return NextResponse.json(
+        {
+          error: `Jenis izin tidak valid. Pilihan: ${validCodes.join(", ")}`,
+        },
+        { status: 400 },
+      );
+    }
+
+    const leaveType = LEAVE_TYPES.find((t) => t.code === leave_type_code)!;
+
+    // ── Validasi format tanggal ───────────────────────
     const start = new Date(start_date);
     const end = new Date(end_date);
 
@@ -155,16 +204,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ✅ FIX [H2]: Validasi tanggal tidak boleh masa lalu
+    // ── Validasi tidak boleh tanggal lampau ───────────
     const today = getTodayWIB();
     if (start_date < today) {
       return NextResponse.json(
-        { error: "Tidak bisa mengajukan cuti untuk tanggal yang sudah lewat" },
+        { error: "Tidak bisa mengajukan izin untuk tanggal yang sudah lewat" },
         { status: 400 },
       );
     }
 
-    // ✅ FIX [H3]: Hitung hari kerja saja (exclude Sabtu & Minggu)
+    // ── Hitung hari kerja ─────────────────────────────
     const totalDays = countWorkdays(start, end);
 
     if (totalDays === 0) {
@@ -174,49 +223,47 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validasi maksimum 30 hari kerja per request
-    if (totalDays > 30) {
-      return NextResponse.json(
-        { error: "Maksimum pengajuan cuti adalah 30 hari kerja per request" },
-        { status: 400 },
-      );
-    }
-
-    const year = start.getFullYear();
-
-    // Cek saldo cuti
-    const { data: balance, error: balanceError } = await supabase
-      .from("leave_balances")
-      .select("*")
-      .eq("employee_id", employee.id)
-      .eq("leave_type_id", leave_type_id)
-      .eq("year", year)
-      .single();
-
-    if (balanceError && balanceError.code !== "PGRST116") {
-      throw balanceError;
-    }
-
-    if (!balance) {
-      return NextResponse.json(
-        { error: "Saldo cuti tidak ditemukan. Hubungi admin." },
-        { status: 400 },
-      );
-    }
-
-    if (balance.remaining < totalDays) {
+    // ── Validasi maksimal 3 hari kerja ────────────────
+    if (totalDays > MAX_WORKDAYS) {
       return NextResponse.json(
         {
-          error: `Saldo cuti tidak cukup. Sisa saldo: ${balance.remaining} hari kerja, dibutuhkan: ${totalDays} hari kerja.`,
+          error: `Pengajuan izin maksimal ${MAX_WORKDAYS} hari kerja. Anda memilih ${totalDays} hari kerja.`,
         },
         { status: 400 },
       );
     }
 
-    // Cek overlap
+    // ── Validasi panjang alasan ───────────────────────
+    if (reason && reason.length > MAX_REASON_LENGTH) {
+      return NextResponse.json(
+        { error: `Alasan maksimal ${MAX_REASON_LENGTH} karakter` },
+        { status: 400 },
+      );
+    }
+
+    // ── Validasi attachment (opsional) ───────────────
+    if (attachmentFile) {
+      if (!ATTACHMENT_ALLOWED_TYPES.includes(attachmentFile.type)) {
+        return NextResponse.json(
+          {
+            error:
+              "Format file tidak didukung. Gunakan JPG, PNG, WEBP, atau PDF.",
+          },
+          { status: 400 },
+        );
+      }
+      if (attachmentFile.size > ATTACHMENT_MAX_BYTES) {
+        return NextResponse.json(
+          { error: "Ukuran file maksimal 5 MB." },
+          { status: 400 },
+        );
+      }
+    }
+
+    // ── Cek overlap dengan izin yang sudah ada ────────
     const { data: overlapping, error: overlapError } = await supabase
       .from("leave_requests")
-      .select("id, start_date, end_date, status")
+      .select("id, start_date, end_date, status, leave_type_code")
       .eq("employee_id", employee.id)
       .in("status", ["pending", "approved"])
       .lte("start_date", end_date)
@@ -226,41 +273,78 @@ export async function POST(request: NextRequest) {
 
     if (overlapping && overlapping.length > 0) {
       return NextResponse.json(
-        { error: "Anda sudah memiliki pengajuan cuti pada periode yang sama" },
+        {
+          error: "Anda sudah memiliki pengajuan izin pada periode yang sama",
+        },
         { status: 400 },
       );
     }
 
-    // Buat leave request
+    // ── Upload attachment ke Storage (jika ada) ───────
+    let attachmentUrl: string | null = null;
+    let attachmentName: string | null = null;
+
+    if (attachmentFile) {
+      // Path: {user_id}/{leave_request_temp_id}_{filename}
+      // Karena belum punya ID, pakai timestamp
+      const ext = attachmentFile.name.split(".").pop();
+      const safeName = attachmentFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const filePath = `${user.id}/${Date.now()}_${safeName}`;
+
+      const arrayBuffer = await attachmentFile.arrayBuffer();
+      const fileBuffer = new Uint8Array(arrayBuffer);
+
+      const { error: uploadError } = await supabase.storage
+        .from(ATTACHMENT_BUCKET)
+        .upload(filePath, fileBuffer, {
+          contentType: attachmentFile.type,
+          upsert: false,
+        });
+
+      if (uploadError) {
+        console.error("Upload attachment error:", uploadError);
+        return NextResponse.json(
+          { error: "Gagal mengunggah file. Coba lagi." },
+          { status: 500 },
+        );
+      }
+
+      attachmentUrl = filePath; // simpan path, bukan public URL (bucket private)
+      attachmentName = attachmentFile.name;
+    }
+
+    // ── Insert pengajuan izin ─────────────────────────
     const { data, error } = await supabase
       .from("leave_requests")
       .insert({
-        employee_id: employee.id, // dari session, bukan dari body
-        leave_type_id,
+        employee_id: employee.id,
+        leave_type_code,
+        leave_type_label: leaveType.label,
         start_date,
         end_date,
         total_days: totalDays,
-        reason: reason || null,
+        reason: reason?.trim() || null,
         status: "pending",
+        attachment_url: attachmentUrl,
+        attachment_name: attachmentName,
       })
       .select(
         `
         *,
-        employee:employees!leave_requests_employee_id_fkey(id, name),
-        leave_type:leave_types(name)
+        employee:employees!leave_requests_employee_id_fkey(id, name)
       `,
       )
       .single();
 
     if (error) throw error;
 
-    // Kirim notifikasi ke admin (fire and forget)
-    notifyAdmins(supabase, data).catch(console.error);
+    // ── Notifikasi ke admin (fire and forget) ─────────
+    notifyAdmins(supabase, data, leaveType.label).catch(console.error);
 
     return NextResponse.json({
       success: true,
       data,
-      message: `Pengajuan cuti berhasil dikirim (${totalDays} hari kerja)`,
+      message: `Pengajuan izin ${leaveType.label} berhasil dikirim (${totalDays} hari kerja)`,
     });
   } catch (error) {
     console.error("Create leave request error:", error);
@@ -271,9 +355,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// =====================================================
+// HELPERS
+// =====================================================
+
 /**
- * ✅ FIX [H3]: Hitung jumlah hari kerja (Senin-Jumat) antara dua tanggal
- * Tidak termasuk Sabtu dan Minggu
+ * Hitung jumlah hari kerja (Senin–Jumat) antara dua tanggal (inklusif)
  */
 function countWorkdays(start: Date, end: Date): number {
   let count = 0;
@@ -284,11 +371,8 @@ function countWorkdays(start: Date, end: Date): number {
   endDate.setHours(0, 0, 0, 0);
 
   while (current <= endDate) {
-    const dayOfWeek = current.getDay();
-    // 0 = Minggu, 6 = Sabtu
-    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-      count++;
-    }
+    const day = current.getDay();
+    if (day !== 0 && day !== 6) count++; // bukan Minggu (0) atau Sabtu (6)
     current.setDate(current.getDate() + 1);
   }
 
@@ -308,8 +392,8 @@ async function notifyAdmins(
     start_date: string;
     end_date: string;
     employee: { name: string } | null;
-    leave_type: { name: string } | null;
   },
+  leaveTypeLabel: string,
 ) {
   const { data: admins } = await supabase
     .from("employees")
@@ -328,7 +412,7 @@ async function notifyAdmins(
 
   const notification = buildNewLeaveRequestNotification({
     employeeName: leaveRequest.employee?.name || "Karyawan",
-    leaveTypeName: leaveRequest.leave_type?.name || "Cuti",
+    leaveTypeName: leaveTypeLabel,
     startDate: formatDate(leaveRequest.start_date, { month: "short" }),
     endDate: formatDate(leaveRequest.end_date, { month: "short" }),
     totalDays: leaveRequest.total_days,

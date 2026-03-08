@@ -33,14 +33,13 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Ambil leave request + data employee + leave type sekaligus
+    // Ambil data pengajuan izin + info karyawan
     const { data: leaveRequest, error: fetchError } = await supabase
       .from("leave_requests")
       .select(
         `
         *,
-        employee:employees!leave_requests_employee_id_fkey(id, name, fcm_token),
-        leave_type:leave_types(name)
+        employee:employees!leave_requests_employee_id_fkey(id, name, fcm_token)
       `,
       )
       .eq("id", id)
@@ -48,19 +47,19 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     if (fetchError || !leaveRequest) {
       return NextResponse.json(
-        { error: "Leave request not found" },
+        { error: "Pengajuan izin tidak ditemukan" },
         { status: 404 },
       );
     }
 
     if (leaveRequest.status !== "pending") {
       return NextResponse.json(
-        { error: "Can only approve pending requests" },
+        { error: "Hanya bisa menyetujui pengajuan yang berstatus pending" },
         { status: 400 },
       );
     }
 
-    // Update status → DB trigger otomatis update leave_balance
+    // Update status
     const { data, error } = await supabase
       .from("leave_requests")
       .update({
@@ -73,7 +72,6 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         `
         *,
         employee:employees!leave_requests_employee_id_fkey(*),
-        leave_type:leave_types(*),
         approver:employees!leave_requests_approved_by_fkey(id, name)
       `,
       )
@@ -81,12 +79,12 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     if (error) throw error;
 
-    // ✅ Kirim FCM notification ke karyawan (fire and forget)
+    // Kirim FCM ke karyawan
     const fcmToken = leaveRequest.employee?.fcm_token;
     if (fcmToken) {
       const notification = buildLeaveApprovedNotification({
         employeeName: leaveRequest.employee.name,
-        leaveTypeName: leaveRequest.leave_type?.name || "Cuti",
+        leaveTypeName: leaveRequest.leave_type_label || "Izin",
         startDate: formatDate(leaveRequest.start_date, { month: "short" }),
         endDate: formatDate(leaveRequest.end_date, { month: "short" }),
         totalDays: leaveRequest.total_days,
@@ -103,7 +101,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({
       success: true,
       data,
-      message: "Pengajuan cuti berhasil disetujui",
+      message: "Pengajuan izin berhasil disetujui",
     });
   } catch (error) {
     console.error("Approve leave request error:", error);

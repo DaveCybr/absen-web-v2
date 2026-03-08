@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
  *
  * Sync leave_balances untuk semua karyawan aktif.
  * Berguna saat:
- * 1. Ada jenis cuti baru yang ditambahkan
+ * 1. Ada jenis Izin baru yang ditambahkan
  * 2. Ada karyawan baru yang balancenya tidak ter-create
  * 3. Migrasi data
  *

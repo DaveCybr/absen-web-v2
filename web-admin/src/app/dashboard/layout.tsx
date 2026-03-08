@@ -18,14 +18,14 @@ import {
   Fingerprint,
   ChevronRight,
   Bell,
-  Search,
 } from "lucide-react";
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard, exact: true },
   { name: "Karyawan", href: "/dashboard/karyawan", icon: Users },
   { name: "Kehadiran", href: "/dashboard/kehadiran", icon: Clock },
-  { name: "Cuti & Izin", href: "/dashboard/cuti", icon: CalendarDays },
+  { name: "Izin", href: "/dashboard/cuti", icon: CalendarDays },
+  { name: "Laporan", href: "/dashboard/laporan", icon: CalendarDays },
   { name: "Pengaturan", href: "/dashboard/pengaturan", icon: Settings },
 ];
 

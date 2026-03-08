@@ -133,7 +133,7 @@ export default async function DashboardPage() {
       trend: null,
     },
     {
-      label: "Cuti / Izin",
+      label: "Izin",
       value: stats.onLeaveToday,
       icon: CalendarDays,
       accent: "#7C3AED",
